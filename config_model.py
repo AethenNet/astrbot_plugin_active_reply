@@ -154,6 +154,14 @@ class MemoryRagConfig:
     embedding_provider_id: str = ""
     recall_k: int = 20
     max_return_results: int = 100
+    # 自动记忆（方案 C：关键词快速通道 + 后台模型抽取）
+    auto_extract_enable: bool = True
+    auto_extract_provider_id: str = ""
+    auto_extract_every_n: int = 10
+    auto_extract_interval_minutes: int = 5
+    auto_extract_window: int = 20
+    auto_extract_min_confidence: float = 0.6
+    auto_extract_scope: str = "group_first"
 
 
 @dataclass(frozen=True)
@@ -259,11 +267,25 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
     )
 
     mem_raw = _section(raw, "memory_rag")
+    scope_raw = _to_str(mem_raw.get("auto_extract_scope")) or "group_first"
+    if scope_raw not in {"group_first", "global", "group"}:
+        scope_raw = "group_first"
     memory_rag = MemoryRagConfig(
         enable=_to_bool(mem_raw.get("enable"), True),
         embedding_provider_id=_to_str(mem_raw.get("embedding_provider_id")),
         recall_k=_to_int(mem_raw.get("recall_k"), 20, 1, 50),
         max_return_results=_to_int(mem_raw.get("max_return_results"), 100, 1, 300),
+        auto_extract_enable=_to_bool(mem_raw.get("auto_extract_enable"), True),
+        auto_extract_provider_id=_to_str(mem_raw.get("auto_extract_provider_id")),
+        auto_extract_every_n=_to_int(mem_raw.get("auto_extract_every_n"), 10, 3, 100),
+        auto_extract_interval_minutes=_to_int(
+            mem_raw.get("auto_extract_interval_minutes"), 5, 1, 120
+        ),
+        auto_extract_window=_to_int(mem_raw.get("auto_extract_window"), 20, 5, 60),
+        auto_extract_min_confidence=_to_float(
+            mem_raw.get("auto_extract_min_confidence"), 0.6, 0.0, 1.0
+        ),
+        auto_extract_scope=scope_raw,
     )
 
     rt_raw = _section(raw, "runtime")

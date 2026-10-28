@@ -4,37 +4,39 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>主动回复 · 控制台</title>
-    <link rel="stylesheet" href="./styles.css?v=10" />
+    <link rel="stylesheet" href="./styles.css?v=14" />
   </head>
   <body>
     <!-- 图标库（内联 SVG，避免依赖外部图标字体/emoji） -->
     <svg class="svg-sprite" aria-hidden="true" focusable="false">
-      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
-      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
-      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
-      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
-      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
-      <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></symbol>
-      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></symbol>
+    <!-- 图标数据来自 Morphicons 的 Lucide 图标集（https://github.com/guillermolg00/morphicons，MIT；Lucide ISC） -->
+    <!-- 菜单按钮使用 Morphicons 引擎做「菜单 ⇄ 关闭」形变，见 vendor/morphicons/ -->
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><g><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0a2.34 2.34 0 0 0 3.319 1.915a2.34 2.34 0 0 1 2.33 4.033a2.34 2.34 0 0 0 0 3.831a2.34 2.34 0 0 1-2.33 4.033a2.34 2.34 0 0 0-3.319 1.915a2.34 2.34 0 0 1-4.659 0a2.34 2.34 0 0 0-3.32-1.915a2.34 2.34 0 0 1-2.33-4.033a2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></g></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><g><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></g></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><g><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3.128a4 4 0 0 1 0 7.744M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></g></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><g><path d="M3 12a9 9 0 0 1 9-9a9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5m5 4a9 9 0 0 1-9 9a9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></g></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
-      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></symbol>
-      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
-      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></symbol>
-      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7z"/><path d="M9 12l2 2 4-4"/></symbol>
-      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
-      <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
-      <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
-      <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></symbol>
-      <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-4-1L3 21l2.1-5a8.4 8.4 0 0 1-1.1-4.5 8.4 8.4 0 0 1 8.4-8.4 8.4 8.4 0 0 1 8.6 8.4z"/></symbol>
-      <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></symbol>
-      <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
-      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
-      <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5 5h14l2 7v7H3v-7z"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><g><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9a9 9 0 0 0-6 2.3L3 13"/></g></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><g><path d="m21 21l-4.34-4.34"/><circle cx="11" cy="11" r="8"/></g></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M10 11v6m4-6v6m5-11v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><g><path d="M2.062 12.348a1 1 0 0 1 0-.696a10.75 10.75 0 0 1 19.876 0a1 1 0 0 1 0 .696a10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></g></symbol>
+      <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18l-6-6l6-6"/></symbol>
+      <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18l6-6l-6-6"/></symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14m-7-7l7 7l-7 7"/></symbol>
+      <symbol id="i-message" viewBox="0 0 24 24"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092a10 10 0 1 0-4.777-4.719"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><g><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></g></symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24"><g><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594zM20 2v4m2-2h-4"/><circle cx="4" cy="20" r="2"/></g></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M10 5H3m9 14H3M14 3v4m2 10v4m5-9h-9m9 7h-5m5-14h-7m-6 5v4m0-2H3"/></symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24"><g><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11"/></g></symbol>
     </svg>
     <div class="app-shell">
       <!-- 顶栏 -->
       <header class="topbar">
-        <button id="menu-btn" class="icon-btn" aria-label="打开菜单" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-menu"></use></svg></button>
+        <button id="menu-btn" class="icon-btn" aria-label="打开菜单" aria-expanded="false"><svg class="icon" aria-hidden="true"><path id="menu-path" d="M4 5h16M4 12h16M4 19h16"/></svg></button>
         <div class="brand">
           <img class="brand-logo" src="./logo.png" alt="ActiveReply" onerror="this.style.display='none'" />
           <div class="brand-text">
@@ -66,10 +68,10 @@
             <span>群配置</span>
             <span id="drawer-group-count" class="muted small">0</span>
           </div>
+          <button id="drawer-manage-groups" class="drawer-manage" title="打开群配置页，可手动输入群号"><svg class="icon" aria-hidden="true"><use href="#i-users"></use></svg>管理全部群 / 手动输入群号</button>
           <div id="drawer-groups" class="drawer-groups">
             <p class="muted small pad">暂无群</p>
           </div>
-          <button id="drawer-manage-groups" class="drawer-manage" title="打开群配置页，可手动输入群号"><svg class="icon" aria-hidden="true"><use href="#i-users"></use></svg>管理全部群 / 手动输入群号</button>
         </div>
 
         <div class="drawer-foot">
@@ -179,6 +181,27 @@
             <h2>记忆 RAG</h2>
             <p class="muted">浏览、筛选、查看与删除插件写入的长期记忆</p>
           </div>
+          <div class="panel auto-memory-panel">
+            <div class="auto-memory-head">
+              <div>
+                <h3>自动记忆</h3>
+                <p class="muted small">关键词快速通道 + 后台模型抽取，聊天中自动形成长期记忆</p>
+              </div>
+              <div class="auto-memory-actions">
+                <span id="auto-memory-status" class="pill">-</span>
+                <button id="auto-memory-toggle" class="ghost small-btn" type="button">切换</button>
+              </div>
+            </div>
+            <div id="auto-memory-body" class="auto-memory-body">
+              <p class="muted small pad">加载中…</p>
+            </div>
+            <div class="auto-memory-foot">
+              <button id="auto-memory-settings" class="link-btn" type="button">
+                <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>去全局设置中调整
+              </button>
+            </div>
+          </div>
+
           <div id="rag-stats" class="status-grid"></div>
 
           <div class="card">
@@ -211,12 +234,13 @@
                     <th>内容</th>
                     <th class="w-scope">群范围</th>
                     <th class="w-roles">角色</th>
+                    <th class="w-src">来源</th>
                     <th class="w-time">时间</th>
                     <th class="w-act">操作</th>
                   </tr>
                 </thead>
                 <tbody id="rag-body">
-                  <tr><td colspan="6" class="muted center pad">暂无数据</td></tr>
+                  <tr><td colspan="7" class="muted center pad">暂无数据</td></tr>
                 </tbody>
               </table>
             </div>
@@ -288,6 +312,6 @@
     </div>
 
     <div id="toast" class="toast"></div>
-    <script type="module" src="./app.js?v=10"></script>
+    <script type="module" src="./app.js?v=14"></script>
   </body>
 </html>

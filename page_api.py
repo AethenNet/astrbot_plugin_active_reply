@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import datetime
 import json
 import time
 from pathlib import Path
@@ -29,6 +30,24 @@ class PageApi:
 
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
+
+    @staticmethod
+    def _plugin_version() -> str:
+        """从 metadata.yaml 读取版本号（避免把版本写死在代码里）。"""
+        try:
+            text = (Path(__file__).resolve().parent / "metadata.yaml").read_text(
+                encoding="utf-8"
+            )
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("version:"):
+                    value = stripped.split(":", 1)[1].strip().strip("\"'")
+                    if value:
+                        # 前端会自己加 "v" 前缀，这里去掉，避免出现 vv1.0.2
+                        return value[1:] if value.lower().startswith("v") else value
+        except Exception:
+            pass
+        return "unknown"
 
     def _embedding_options(self) -> list[dict[str, str]]:
         """列出当前可用的 embedding 提供商，方便用户复制 ID / 模型名。"""
@@ -142,7 +161,7 @@ class PageApi:
 
         return ok(
             {
-                "version": getattr(plugin, "version", "1.0.0"),
+                "version": self._plugin_version(),
                 "timezone": plugin._resolve_timezone_name(),
                 "data_dir": str(plugin.data_dir),
                 "groups": groups,
@@ -321,7 +340,69 @@ class PageApi:
         except Exception as exc:
             logger.error(f"[ActiveReply] 读取记忆列表失败: {exc}", exc_info=True)
             return fail(f"读取失败：{exc}")
+        for item in data.get("items") or []:
+            meta = item.get("extra_metadata") or {}
+            item["source"] = str(meta.get("source") or "manual")
         return ok(data)
+
+    # ------------------------------------------------------------------ #
+    # 自动记忆
+    # ------------------------------------------------------------------ #
+    def _auto_memory_state(self) -> dict[str, Any]:
+        cfg = self.plugin._global_cfg()
+        store = self.plugin.memory_store
+        stats = store.get_stats() if store else {}
+        counts = store.source_counts() if store else {}
+        today_start = 0.0
+        try:
+            now = datetime.datetime.now(self.plugin._tzinfo())
+            today_start = now.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ).timestamp()
+        except Exception:
+            today_start = 0.0
+        today = store.count_since(today_start) if store else 0
+        return {
+            "enabled": bool(cfg.memory_rag.auto_extract_enable),
+            "provider_id": cfg.memory_rag.auto_extract_provider_id,
+            "every_n": cfg.memory_rag.auto_extract_every_n,
+            "interval_minutes": cfg.memory_rag.auto_extract_interval_minutes,
+            "window": cfg.memory_rag.auto_extract_window,
+            "min_confidence": cfg.memory_rag.auto_extract_min_confidence,
+            "scope": cfg.memory_rag.auto_extract_scope,
+            "stats": {
+                "total": int(stats.get("total_memories", 0) or 0),
+                "keyword": int(counts.get("keyword", 0)),
+                "model": int(counts.get("model", 0)),
+                "manual": int(counts.get("manual", 0)),
+                "today": int(today),
+            },
+            "providers": self._provider_options(),
+        }
+
+    async def memory_auto(self) -> dict[str, Any]:
+        return ok(self._auto_memory_state())
+
+    async def memory_auto_toggle(self) -> dict[str, Any]:
+        payload = await read_json()
+        if "enable" not in payload:
+            return fail("缺少 enable 参数")
+        enable = bool(payload.get("enable"))
+        patch = {"memory_rag": {"auto_extract_enable": enable}}
+        merged = deep_merge(copy.deepcopy(dict(self.plugin.config)), patch)
+        try:
+            self.plugin.config.clear()
+            self.plugin.config.update(merged)
+        except Exception as exc:
+            return fail(f"更新配置失败：{exc}")
+        saver = getattr(self.plugin.config, "save_config", None)
+        if callable(saver):
+            try:
+                saver()
+            except Exception as exc:
+                logger.warning(f"[ActiveReply] 保存配置失败: {exc}")
+        self.plugin.invalidate_config_cache()
+        return ok(self._auto_memory_state())
 
     async def rag_detail(self, memory_id: str) -> dict[str, Any]:
         store = self.plugin.memory_store

@@ -42,6 +42,7 @@ class MemoryStore:
         self._tzinfo: Any = timezone.utc
         self.set_display_timezone(display_timezone)
         self._init_schema()
+        self.normalize_group_scopes()
 
     # ------------------------------------------------------------------ #
     # 基础设施
@@ -86,6 +87,45 @@ class MemoryStore:
                 CREATE INDEX IF NOT EXISTS idx_roles_memory ON memory_roles(memory_id);
                 """
             )
+
+    _MESSAGE_TYPE_SEGMENTS = {
+        "group",
+        "groupmessage",
+        "friend",
+        "friendmessage",
+        "private",
+    }
+
+    def normalize_group_scopes(self) -> int:
+        """把 ``platform:GroupMessage:123`` 之类的旧 scope 归一成 ``platform:123``。"""
+        changed = 0
+        with self._lock, closing(self._connect()) as conn, conn:
+            rows = conn.execute(
+                "SELECT id, group_scope, group_id, platform_id FROM memories"
+            ).fetchall()
+            for row in rows:
+                scope = str(row["group_scope"] or "").strip()
+                parts = scope.split(":")
+                if (
+                    len(parts) < 3
+                    or parts[1].lower() not in self._MESSAGE_TYPE_SEGMENTS
+                ):
+                    continue
+                platform = parts[0].strip()
+                group = parts[-1].strip()
+                new_scope = f"{platform}:{group}" if platform and group else group
+                conn.execute(
+                    "UPDATE memories SET group_scope = ?, group_id = ?, platform_id = ? "
+                    "WHERE id = ?",
+                    (
+                        new_scope,
+                        str(row["group_id"] or group),
+                        str(row["platform_id"] or platform),
+                        int(row["id"]),
+                    ),
+                )
+                changed += 1
+        return changed
 
     def set_display_timezone(self, timezone_name: str) -> str:
         """设置时间展示使用的时区（与 AstrBot 全局 timezone 保持一致）。"""
@@ -363,6 +403,70 @@ class MemoryStore:
         with self._lock, closing(self._connect()) as conn, conn:
             cursor = conn.execute("DELETE FROM memories WHERE id = ?", (target,))
             return cursor.rowcount > 0
+
+    def find_similar_memory(
+        self,
+        embedding: list[float],
+        *,
+        group_scope: str = "",
+        threshold: float = 0.92,
+        scan_limit: int = 2000,
+        include_global: bool = False,
+    ) -> dict[str, Any] | None:
+        """查找语义上与给定向量高度相似的记忆（用于去重）。"""
+        if not embedding:
+            return None
+        where = ""
+        params: list[Any] = []
+        scope = str(group_scope or "").strip()
+        if scope and not include_global:
+            where = " WHERE m.group_scope = ? OR m.group_scope = ''"
+            params.append(scope)
+        elif scope and include_global:
+            where = " WHERE m.group_scope = ?"
+            params.append(scope)
+        sql = (
+            "SELECT m.id, m.content, m.embedding, m.group_scope, m.memory_time "
+            f"FROM memories m{where} ORDER BY m.memory_time DESC LIMIT ?"
+        )
+        params.append(max(1, int(scan_limit)))
+        best: tuple[float, sqlite3.Row] | None = None
+        with self._lock, closing(self._connect()) as conn:
+            for row in conn.execute(sql, params).fetchall():
+                vector = self._parse_embedding(row["embedding"])
+                if not vector or len(vector) != len(embedding):
+                    continue
+                score = self._cosine_similarity(vector, embedding)
+                if score >= threshold and (best is None or score > best[0]):
+                    best = (score, row)
+        if best is None:
+            return None
+        row = best[1]
+        return {
+            "memory_id": int(row["id"]),
+            "content": row["content"],
+            "group_scope": row["group_scope"],
+            "similarity": round(best[0], 4),
+        }
+
+    def source_counts(self) -> dict[str, int]:
+        """按来源统计记忆条数（keyword / model / manual / 其他）。"""
+        counts: dict[str, int] = {}
+        with self._lock, closing(self._connect()) as conn:
+            rows = conn.execute("SELECT extra_metadata FROM memories").fetchall()
+        for row in rows:
+            meta = self._parse_metadata(row["extra_metadata"])
+            source = str(meta.get("source") or "manual")
+            counts[source] = counts.get(source, 0) + 1
+        return counts
+
+    def count_since(self, timestamp: float) -> int:
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM memories WHERE memory_time >= ?",
+                (float(timestamp),),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
 
     def get_stats(self) -> dict[str, Any]:
         with self._lock, closing(self._connect()) as conn:

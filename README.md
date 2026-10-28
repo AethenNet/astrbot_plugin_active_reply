@@ -8,7 +8,7 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.0.0-4b8bf5)](https://docs.astrbot.app/dev/star/plugin-new.html)
 [![Python](https://img.shields.io/badge/Python-%3E%3D3.10-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v1.0.1-12a37a)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.0.2-12a37a)](./CHANGELOG.md)
 
 </div>
 
@@ -52,7 +52,10 @@
 | 联网搜索 | `grok_web_search` 工具，按需检索实时信息 |
 | 记忆 RAG | `enhance_memory_rag_write` / `enhance_memory_rag_read`，可跨群检索长期记忆 |
 | 插件页面 | 汉堡菜单导航；每个群独立配置；记忆浏览/筛选/删除；自动跟随深浅色 |
-| 指令 | `/执行回复`：立即按当前方式执行一次回复或判定 |
+| 指令 | `/执行回复`：立即按当前方式执行一次回复或判定，并附带一份执行日志（token 用量） |
+| 回复调试 | `/replytest true|false`：开启后每次回复附带 token 用量与缓存命中率 |
+| 记忆自动写入 | 用户说「记住…」时插件兜底写入一条长期记忆，不依赖模型是否调用工具 |
+| 自动记忆（方案 C） | 关键词快速通道 + 后台模型抽取：正常聊天就会自动形成偏好/身份/约定类长期记忆，可在 RAG 页面查看与开关 |
 
 ## 快速开始
 
@@ -72,7 +75,8 @@
 
 | 指令 | 权限 | 说明 |
 |---|---|---|
-| `/执行回复` | 管理员 | 立即执行一次主动回复（概率模式）或模型判定（model_choice 模式），该指令消息不参与上下文 |
+| `/执行回复` | 管理员 | 立即执行一次主动回复（概率模式）或模型判定（model_choice 模式），该指令消息不参与上下文；执行后会额外发送一份「执行日志」（合并转发），含 token 用量与缓存命中率 |
+| `/replytest true`、`/replytest false` | 管理员 | 开 / 关「回复调试」。开启后本群每次回复都会额外发送 token 用量（输入命中缓存 / 未命中缓存 / 输出）与缓存命中率。别名：`/回复调试 开`、`/回复调试 关` |
 
 ## 模型工具
 
@@ -95,6 +99,11 @@
 
 - 📘 **详细说明：[插件说明.md](./插件说明.md)** —— 运行逻辑、每次回复的判定过程、标签语法、配置项含义、常见问题。
 - 📝 **更新日志：[CHANGELOG.md](./CHANGELOG.md)**
+
+## 致谢
+
+- 界面图标来自 [Morphicons](https://github.com/guillermolg00/morphicons) 的 Lucide 图标集（MIT / Lucide ISC），菜单按钮使用 Morphicons 引擎做形变动画；
+- 功能设计参考了 [`astrbot_plugin_astrbot_enhance_mode`](https://github.com/Axi404/astrbot_plugin_astrbot_enhance_mode)。
 
 ## 许可证
 

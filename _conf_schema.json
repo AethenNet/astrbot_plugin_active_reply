@@ -276,9 +276,10 @@
       },
       "embedding_provider_id": {
         "description": "Embedding Provider ID",
-        "hint": "用于记忆向量化的 Embedding 提供商 ID（在 AstrBot 模型提供商中查看），留空时自动使用第一个可用的 embedding provider",
+        "hint": "用于记忆向量化的 Embedding 提供商；下拉选择，留空时自动使用第一个可用的 embedding provider",
         "type": "string",
-        "default": ""
+        "default": "",
+        "_special": "select_provider:embedding"
       },
       "recall_k": {
         "description": "召回数量",
@@ -301,6 +302,79 @@
           "step": 1
         },
         "default": 100
+      },
+      "auto_extract_enable": {
+        "description": "自动产生记忆",
+        "hint": "开启后：用户说「记住…」时立即写入；后台还会定期用模型从聊天里抽取值得长期记住的偏好、身份、约定",
+        "type": "bool",
+        "default": true
+      },
+      "auto_extract_provider_id": {
+        "description": "记忆抽取模型",
+        "hint": "用于后台抽取记忆的对话模型；留空时跟随当前会话模型。建议选便宜的小模型",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "auto_extract_every_n": {
+        "description": "抽取频率（条）",
+        "hint": "每累计多少条群消息触发一次后台记忆抽取",
+        "type": "int",
+        "slider": {
+          "min": 3,
+          "max": 100,
+          "step": 1
+        },
+        "default": 10
+      },
+      "auto_extract_interval_minutes": {
+        "description": "抽取间隔（分钟）",
+        "hint": "两次抽取之间至少间隔多少分钟，避免刷屏时反复调用模型",
+        "type": "int",
+        "slider": {
+          "min": 1,
+          "max": 120,
+          "step": 1
+        },
+        "default": 5
+      },
+      "auto_extract_window": {
+        "description": "抽取窗口（条）",
+        "hint": "每次抽取时回看最近多少条群聊记录",
+        "type": "int",
+        "slider": {
+          "min": 5,
+          "max": 60,
+          "step": 1
+        },
+        "default": 20
+      },
+      "auto_extract_min_confidence": {
+        "description": "最低置信度",
+        "hint": "模型给出的置信度低于该值的候选记忆会被丢弃（0~1）",
+        "type": "float",
+        "slider": {
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        },
+        "default": 0.6
+      },
+      "auto_extract_scope": {
+        "description": "记忆作用域",
+        "hint": "本群优先+全局兜底：群内记忆优先，查不到时再查全局记忆；全部全局：任何群都能回忆；仅本群：严格隔离",
+        "type": "string",
+        "options": [
+          "group_first",
+          "global",
+          "group"
+        ],
+        "labels": [
+          "本群优先+全局兜底",
+          "全部全局",
+          "仅本群"
+        ],
+        "default": "group_first"
       }
     }
   },

@@ -25,6 +25,19 @@ class RuntimeState:
         self.sender_names: dict[str, dict[str, str]] = defaultdict(dict)
         # 主动回复触发计数
         self.reply_counters: dict[str, int] = defaultdict(int)
+        # 本轮 token 用量（按来源累计）
+        self.turn_usage: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"input_cached": 0, "input_other": 0, "output": 0, "calls": 0}
+        )
+        # 回复调试开关（按来源）
+        self.debug_origins: set[str] = set()
+        # 待发送的调试报告
+        self.pending_report: dict[str, dict] = {}
+        # 本轮执行日志
+        self.turn_logs: dict[str, list[str]] = defaultdict(list)
+        # 自动记忆：抽取计数与上次抽取时间
+        self.extract_counters: dict[str, int] = defaultdict(int)
+        self.last_extract_at: dict[str, float] = {}
         # LRU：最左侧最久未使用
         self.origin_lru: OrderedDict[str, None] = OrderedDict()
 
@@ -37,6 +50,11 @@ class RuntimeState:
         self.image_registry.pop(origin, None)
         self.sender_names.pop(origin, None)
         self.reply_counters.pop(origin, None)
+        self.turn_usage.pop(origin, None)
+        self.turn_logs.pop(origin, None)
+        self.pending_report.pop(origin, None)
+        self.extract_counters.pop(origin, None)
+        self.last_extract_at.pop(origin, None)
 
     def touch_origin(self, origin: str, max_origins: int) -> None:
         """标记来源被使用，并在超出上限时淘汰最久未使用的来源。"""
@@ -48,6 +66,40 @@ class RuntimeState:
         while len(self.origin_lru) > limit:
             oldest, _ = self.origin_lru.popitem(last=False)
             self._evict_origin(oldest)
+
+    # ------------------------------------------------------------------ #
+    # 一轮对话的用量 / 日志
+    # ------------------------------------------------------------------ #
+    def reset_turn(self, origin: str) -> None:
+        """新的一轮开始：清空用量与执行日志。"""
+        self.turn_usage[origin] = {
+            "input_cached": 0,
+            "input_other": 0,
+            "output": 0,
+            "calls": 0,
+        }
+        self.turn_logs[origin] = []
+
+    def add_usage(self, origin: str, usage: object) -> None:
+        """累加一次模型调用的 token 用量（兼容不同版本的 usage 结构）。"""
+        bucket = self.turn_usage[origin]
+        bucket["input_cached"] += int(getattr(usage, "input_cached", 0) or 0)
+        bucket["input_other"] += int(getattr(usage, "input_other", 0) or 0)
+        bucket["output"] += int(getattr(usage, "output", 0) or 0)
+        bucket["calls"] += 1
+
+    def log_line(self, origin: str, line: str) -> None:
+        if line:
+            self.turn_logs[origin].append(str(line))
+
+    def set_debug(self, origin: str, enabled: bool) -> None:
+        if enabled:
+            self.debug_origins.add(origin)
+        else:
+            self.debug_origins.discard(origin)
+
+    def is_debug(self, origin: str) -> bool:
+        return origin in self.debug_origins
 
     def cleanup_origin(self, origin: str) -> None:
         self._evict_origin(origin)

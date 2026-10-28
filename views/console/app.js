@@ -7,7 +7,7 @@
  * 后端统一返回 { success: true, data } 或 { success: false, error }。
  */
 
-const UI_BUILD = 10;
+const UI_BUILD = 14;
 console.info(`[ActiveReply] UI build ${UI_BUILD}`);
 
 const bridge = window.AstrBotPluginView || window.AstrBotPluginPage || null;
@@ -25,6 +25,7 @@ const state = {
   embeddingProviders: [],
   schema: null,
   globalValues: null,
+  autoMemory: null,
   rag: {
     page: 1,
     pageSize: 20,
@@ -210,6 +211,7 @@ function switchView(name) {
   } else if (name === "groups") {
     void loadGroups();
   } else if (name === "rag") {
+    void loadAutoMemory();
     void loadRagStats(true);
     void loadRagList();
   } else if (name === "settings") {
@@ -217,11 +219,42 @@ function switchView(name) {
   }
 }
 
+let menuMorph = null;
+const MENU_PATH_D = "M4 5h16M4 12h16M4 19h16";
+const CLOSE_PATH_D = "M18 6L6 18M6 6l12 12";
+
+async function initMorphIcons() {
+  try {
+    const { createMorph } = await import("./vendor/morphicons/dom.js");
+    const path = document.getElementById("menu-path");
+    if (!path) return;
+    menuMorph = createMorph(path, MENU_PATH_D);
+    menuMorph.set(MENU_PATH_D);
+  } catch (error) {
+    console.warn("[ActiveReply] morphicons 加载失败，菜单图标回退为静态切换", error);
+  }
+}
+
+function setMenuMorph(open) {
+  const next = open ? CLOSE_PATH_D : MENU_PATH_D;
+  if (menuMorph) {
+    try {
+      menuMorph.morphTo(next);
+      return;
+    } catch (error) {
+      menuMorph = null;
+    }
+  }
+  const path = document.getElementById("menu-path");
+  if (path) path.setAttribute("d", next);
+}
+
 function openDrawer() {
   $("drawer").classList.add("open");
   $("drawer").setAttribute("aria-hidden", "false");
   $("scrim").classList.add("show");
   $("menu-btn").setAttribute("aria-expanded", "true");
+  setMenuMorph(true);
 }
 
 function closeDrawer() {
@@ -229,6 +262,7 @@ function closeDrawer() {
   $("drawer").setAttribute("aria-hidden", "true");
   $("scrim").classList.remove("show");
   $("menu-btn").setAttribute("aria-expanded", "false");
+  setMenuMorph(false);
 }
 
 /* ------------------------------------------------------------------ */
@@ -606,6 +640,28 @@ function renderGroupPanel() {
   $("group-form").innerHTML = panels;
   bindFormEvents();
   switchTab(state.currentTab);
+  ensureTabVisible("group-tabs");
+}
+
+function ensureTabVisible(containerId) {
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`#${containerId} .tab.active`);
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ inline: "nearest", block: "nearest" });
+    }
+  });
+}
+
+function centerTab(tab) {
+  if (!tab || typeof tab.scrollIntoView !== "function") return;
+  tab.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+}
+
+function playTabSwitch(el) {
+  if (!el) return;
+  el.classList.remove("tab-switch");
+  void el.offsetWidth;
+  el.classList.add("tab-switch");
 }
 
 function switchTab(name) {
@@ -953,6 +1009,7 @@ function renderGlobalForm() {
     ? state.globalTab
     : sections[0][0];
   switchGlobalTab(activeKey);
+  ensureTabVisible("global-tabs");
 }
 
 function schemaDefaults(schema) {
@@ -1095,7 +1152,7 @@ function renderRagRows(items) {
   const body = $("rag-body");
   if (!Array.isArray(items) || !items.length) {
     body.innerHTML =
-      '<tr><td colspan="6" class="muted center pad">当前筛选条件下没有记忆</td></tr>';
+      '<tr><td colspan="7" class="muted center pad">当前筛选条件下没有记忆</td></tr>';
     return;
   }
   body.innerHTML = items
@@ -1110,6 +1167,9 @@ function renderRagRows(items) {
             .map((role) => `<span class="pill mono">${escapeHtml(role)}</span>`)
             .join("") || '<span class="muted">-</span>'
         }</td>
+        <td data-label="来源"><span class="pill source-pill">${autoSourceLabel(
+          item.source
+        )}</span></td>
         <td class="mono small" data-label="时间">${escapeHtml(
           (item.memory_time_iso || "-").replace("T", " ").slice(0, 19)
         )}</td>
@@ -1131,6 +1191,85 @@ function renderRagRows(items) {
   body.querySelectorAll("[data-delete]").forEach((btn) => {
     btn.addEventListener("click", () => void deleteMemory(btn.dataset.delete));
   });
+}
+
+const AUTO_SCOPE_LABELS = {
+  group_first: "本群优先 + 全局兜底",
+  global: "全部全局",
+  group: "仅本群",
+};
+
+function autoSourceLabel(source) {
+  const map = { model: "模型抽取", keyword: "关键词", manual: "手动", selftest: "自检" };
+  return map[source] || source || "手动";
+}
+
+async function loadAutoMemory() {
+  try {
+    const data = await callApi("GET", "memory/auto");
+    state.autoMemory = data;
+    renderAutoMemory(data);
+  } catch (error) {
+    $("auto-memory-body").innerHTML = `<p class="muted small pad">加载失败：${escapeHtml(
+      error.message || "未知错误"
+    )}</p>`;
+  }
+}
+
+function renderAutoMemory(data) {
+  if (!data) return;
+  const enabled = Boolean(data.enabled);
+  const status = $("auto-memory-status");
+  status.textContent = enabled ? "已开启" : "已关闭";
+  status.className = `pill ${enabled ? "" : "muted-pill"}`;
+  const toggle = $("auto-memory-toggle");
+  toggle.textContent = enabled ? "关闭" : "开启";
+  const provider = data.provider_id ? data.provider_id : "跟随当前会话模型";
+  const stats = data.stats || {};
+  const rows = [
+    ["抽取模型", provider],
+    ["抽取频率", `${data.every_n} 条 / ${data.interval_minutes} 分钟`],
+    ["回看窗口", `最近 ${data.window} 条消息`],
+    ["最低置信度", Number(data.min_confidence).toFixed(2)],
+    ["记忆作用域", AUTO_SCOPE_LABELS[data.scope] || data.scope || "-"],
+  ];
+  $("auto-memory-body").innerHTML = `
+    <div class="auto-memory-grid">
+      ${rows
+        .map(
+          ([label, value]) => `
+        <div class="auto-memory-item">
+          <span class="auto-memory-label">${escapeHtml(label)}</span>
+          <span class="auto-memory-value">${escapeHtml(String(value))}</span>
+        </div>`
+        )
+        .join("")}
+    </div>
+    <div class="auto-memory-stats">
+      <span>关键词记忆 <b>${formatNumber(stats.keyword || 0)}</b></span>
+      <span>模型抽取 <b>${formatNumber(stats.model || 0)}</b></span>
+      <span>今日新增 <b>${formatNumber(stats.today || 0)}</b></span>
+      <span>记忆总数 <b>${formatNumber(stats.total || 0)}</b></span>
+    </div>`;
+}
+
+async function toggleAutoMemory() {
+  const current = state.autoMemory;
+  if (!current) return;
+  const next = !current.enabled;
+  const button = $("auto-memory-toggle");
+  button.disabled = true;
+  try {
+    const data = await callApi("POST", "memory/auto/toggle", { enable: next });
+    state.autoMemory = data;
+    renderAutoMemory(data);
+    toast(next ? "已开启自动记忆" : "已关闭自动记忆");
+    void loadRagStats(true);
+  } catch (error) {
+    toast(error.message || "切换失败", true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadRagList() {
@@ -1300,7 +1439,11 @@ function bindEvents() {
 
   $("group-tabs").addEventListener("click", (event) => {
     const tab = event.target.closest(".tab");
-    if (tab) switchTab(tab.dataset.tab);
+    if (tab) {
+      switchTab(tab.dataset.tab);
+      playTabSwitch($("group-form"));
+      centerTab(tab);
+    }
   });
 
   $("independent-toggle").addEventListener("change", (event) => {
@@ -1344,7 +1487,11 @@ function bindEvents() {
 
   $("global-tabs").addEventListener("click", (event) => {
     const tab = event.target.closest(".tab");
-    if (tab) switchGlobalTab(tab.dataset.gtab);
+    if (tab) {
+      switchGlobalTab(tab.dataset.gtab);
+      playTabSwitch($("global-form"));
+      centerTab(tab);
+    }
   });
 
   $("save-global").addEventListener("click", () => void saveGlobal());
@@ -1366,6 +1513,11 @@ function bindEvents() {
     state.rag.role = "";
     state.rag.page = 1;
     void loadRagList();
+  });
+  $("auto-memory-toggle").addEventListener("click", () => void toggleAutoMemory());
+  $("auto-memory-settings").addEventListener("click", () => {
+    state.globalTab = "memory_rag";
+    switchView("settings");
   });
   $("rag-cleanup").addEventListener("click", () => void cleanupMemories());
   $("rag-selftest").addEventListener("click", () => void ragSelftest());
@@ -1398,6 +1550,7 @@ function bindEvents() {
 /* ------------------------------------------------------------------ */
 async function init() {
   bindEvents();
+  void initMorphIcons();
   applyTheme(false);
   $("drawer-version").textContent = `UI${UI_BUILD}`;
   if (!bridge) {
