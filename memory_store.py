@@ -26,7 +26,13 @@ DEFAULT_SCAN_LIMIT = 5000
 
 
 class MemoryStore:
-    """记忆记录与角色标签的持久化存储。"""
+    """记忆记录与角色标签的 SQLite 持久化存储。
+
+    记忆正文、时间、作用域、来源元数据和 embedding 存在 ``memories`` 主表，
+    每条记忆关联的角色 ID 单独放入 ``memory_roles``。向量按 JSON 保存，
+    检索时只扫描满足结构化条件的一段最新记录，再在 Python 中计算余弦相似度；
+    该实现不依赖额外向量数据库，但扫描上限意味着语义检索并非全库精确索引。
+    """
 
     def __init__(
         self,
@@ -278,7 +284,25 @@ class MemoryStore:
     ) -> int:
         """持久化一条记忆及其角色关联，并返回新记录 ID。
 
-        正文、角色列表和 embedding 必须非空；记忆时间支持秒或毫秒。
+        正文、角色列表和 embedding 必须非空；记忆时间支持秒或毫秒。主表行
+        与角色关联写入同一个 SQLite 事务，任一 SQL 操作失败时事务会回滚，
+        避免留下没有关联角色或关联指向无效记忆的半成品。
+
+        Args:
+            content: 记忆正文；保存前去除首尾空白。
+            embedding: 正文对应的数值向量；其维度随记录一起存储。
+            role_ids: 与这条记忆相关的用户/角色 ID；空值会在写库前拒绝。
+            memory_time: 记忆实际发生时间；省略时使用当前 Unix 秒时间。
+            group_scope: 规范化群范围；空字符串表示全局记忆。
+            group_id: 群号，用于结构化过滤及后台列表展示。
+            platform_id: 平台标识，用于区分跨平台的同号群。
+            extra_metadata: 来源、置信度等扩展信息，非字典输入不会被保存。
+
+        Returns:
+            SQLite 自动分配的正整数主键。
+
+        Raises:
+            ValueError: 正文、角色集合或 embedding 为空。
         """
         # 校验正文、角色与 embedding 后，在同一事务写入主记录和角色关联。
         clean_content = str(content or "").strip()
@@ -360,7 +384,22 @@ class MemoryStore:
         group_scope: str = "",
         role_id: str = "",
     ) -> dict[str, Any]:
-        """按关键词、作用域和角色过滤记忆，并返回分页元数据。"""
+        """按关键词、作用域和角色过滤记忆，并返回一页结果及分页信息。
+
+        关键词同时匹配正文和字符串形式的记忆 ID，方便控制台按内容或编号
+        查找。总数查询和当前页查询共用同一组过滤条件；角色关联在页结果取出后
+        批量读取，避免对每条记忆各发起一次查询。
+
+        Args:
+            page: 从 1 开始的页码，低于 1 时校正为 1。
+            page_size: 每页记录数，限定在 1 到 200 之间。
+            keyword: 可选正文/记录 ID 子串。
+            group_scope: 可选精确作用域；空字符串表示不过滤作用域。
+            role_id: 可选精确角色 ID。
+
+        Returns:
+            包含 ``items``、``total``、``page``、``page_size`` 与 ``has_more`` 的字典。
+        """
         # 组合关键词、群范围和角色条件分页查询，并批量装配角色列表。
         page = max(1, int(page))
         page_size = max(1, min(200, int(page_size)))
@@ -600,10 +639,31 @@ class MemoryStore:
         max_results: int = 10,
         scan_limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        """按元数据过滤并可选使用余弦相似度排序。
+        """先按结构化条件筛选，再可选地执行有限窗口内的语义召回。
 
-        当提供 ``query_embedding`` 时，先从符合条件的最新记录中取有限候选，
-        按相似度截取 ``recall_k``，再按指定相关度/时间顺序返回。
+        执行分为三个阶段：SQL 使用参数化条件筛选作用域、群号、平台、时间和
+        角色；按记忆时间倒序最多读取 ``scan_limit`` 条候选并批量取回角色；
+        若提供查询向量，则对候选逐条计算余弦相似度并先截取 ``recall_k``，
+        最后按时间或相关度排序并应用 ``max_results``。因此扫描上限和召回数
+        是两层不同的限制，前者约束数据库读取量，后者约束语义排序后的候选量。
+
+        Args:
+            query_embedding: 查询向量；为空时不计算相似度，按时间返回结果。
+            recall_k: 语义相关候选的截取数量；小于等于 0 时不做该层截断。
+            role_ids: 可选角色 ID 列表。
+            role_match_mode: ``any`` 命中任一角色，``all`` 要求所有角色都关联。
+            start_time: 可选包含式时间下界（Unix 秒）。
+            end_time: 可选包含式时间上界（Unix 秒）。
+            group_scope: 可选精确的规范作用域。
+            group_id: 可选精确群号。
+            platform_id: 可选精确平台 ID。
+            sort_by: ``relevance`` 优先按相似度；否则按记忆时间。
+            sort_order: ``asc`` 正序，其他值按倒序处理。
+            max_results: 最终最大结果数；小于等于 0 时不截断结果。
+            scan_limit: SQL 阶段的最大候选数量；未指定时采用实例默认值。
+
+        Returns:
+            记忆摘要字典列表，语义检索项额外含 ``similarity`` 分数。
         """
         roles = self._normalize_role_ids(role_ids or [])
         mode = "all" if str(role_match_mode).strip().lower() == "all" else "any"
@@ -642,6 +702,8 @@ class MemoryStore:
                 )
                 params.extend(roles)
 
+        # 只在 SQL 中生成筛选子句，所有外部值仍通过 params 绑定；LIMIT 也受
+        # scan_limit 约束，避免在 Python 层一次性载入整个记忆库再做排序。
         sql = (
             "SELECT m.id, m.content, m.embedding, m.embedding_dim, m.memory_time, "
             "m.group_scope, m.group_id, m.platform_id, m.extra_metadata, "
@@ -673,6 +735,8 @@ class MemoryStore:
                 str(role_row["role_id"])
             )
 
+        # 没有查询向量时 similarity 保持为 None，后续自然改用时间排序；
+        # 向量检索则先筛出 recall_k 个最相关项，再执行用户要求的最终排序。
         has_query = bool(query_embedding)
         query_vec = [float(value) for value in (query_embedding or [])]
 

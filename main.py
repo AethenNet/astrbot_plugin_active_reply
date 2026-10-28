@@ -1,9 +1,16 @@
 """主动回复（ActiveReply）插件主体。
 
-职责划分：
-* 本文件只做"装配 + AstrBot 事件钩子 + LLM 工具"；
-* 配置解析在 ``config_model``，标签解析在 ``tags``，状态在 ``runtime_state``，
-  持久化在 ``memory_store`` / ``group_store``，页面接口在 ``page_api``。
+本模块负责把插件的运行组件装配起来，并连接 AstrBot 的事件、LLM 与页面生命周期：
+
+* 群消息钩子先维护短期历史，再按配置和触发策略决定是否发起主动回复；
+* LLM 请求钩子按需加入群历史、成员角色与长期记忆提示，并包装发送路径，
+  使模型输出的互动标签最终转换为平台消息组件；
+* 工具方法提供联网搜索、图片理解与记忆读写等模型可调用能力；
+* 页面路由由 ``page_api`` 处理，本模块仅提供它所需的运行态与存储访问。
+
+配置解析、群级配置、会话状态、标签转换和 SQLite 持久化分别由
+``config_model``、``group_store``、``runtime_state``、``tags``、
+``memory_store`` 等模块负责。这样事件编排集中在这里，数据规则则可独立维护。
 """
 
 from __future__ import annotations
@@ -166,7 +173,12 @@ def _optional_hook(name: str):
 
 
 class ActiveReplyPlugin(star.Star):
-    """AstrBot 主动回复插件入口。"""
+    """AstrBot 主动回复插件入口及各子系统之间的协调器。
+
+    插件对象持有框架上下文、解析配置所需的原始配置、进程内运行态、
+    群配置文件和长期记忆数据库。事件回调负责业务流程编排，具体的数据
+    清洗与存储由独立模块完成；记忆数据库初始化失败时仍允许其他功能运行。
+    """
 
     def __init__(self, context: star.Context, config: dict | None = None) -> None:
         """初始化插件状态、持久化存储及页面路由。
@@ -479,7 +491,20 @@ class ActiveReplyPlugin(star.Star):
     async def on_group_message(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[Any, None]:
-        """记录群聊历史，并按配置决定是否主动回复。"""
+        """处理群消息的入口：记历史、安排记忆任务并判断是否主动回复。
+
+        处理顺序刻意分为几道门：先排除非群消息、唤醒命令、Bot 自身消息和
+        空事件，再维护本轮状态及可选的群历史/记忆；被 @ 或引用的消息交给
+        AstrBot 原有回复流程，只有未被正常回复流程接管且主动回复开关、
+        群名单均允许时，才执行概率/阈值/模型判定。这样的顺序避免重复回复，
+        也确保关闭主动回复时仍能按配置保留上下文或自动记忆功能。
+
+        Args:
+            event: 当前群消息事件。
+
+        Yields:
+            AstrBot 请求 LLM 回复时产生的事件处理结果。
+        """
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return
         if self._is_wake_command(event):
@@ -539,7 +564,16 @@ class ActiveReplyPlugin(star.Star):
             yield item
 
     async def _decide_reply(self, event: AstrMessageEvent, cfg: PluginConfig) -> bool:
-        """按回复方式决定本轮是否发言，并维护触发计数。"""
+        """根据主动回复模式做一次触发判断，并维护该会话的消息计数。
+
+        ``model_choice`` 模式只有累计达到阈值后才询问模型；其他模式在达到
+        阈值时必定触发，阈值尚未达到时再按 ``possibility`` 抽样。每次触发
+        都会清零计数，避免同一批累计消息连续触发多次；模型判定未触发时
+        也不会把已消费的计数留到下一轮。
+
+        Returns:
+            本条消息是否应启动主动回复。
+        """
         origin = event.unified_msg_origin
         self._touch(origin, cfg)
         ar = cfg.active_reply
@@ -684,7 +718,16 @@ class ActiveReplyPlugin(star.Star):
     async def _judge(
         self, event: AstrMessageEvent, cfg: PluginConfig, *, reason: str
     ) -> tuple[bool, str]:
-        """调用模型判断是否回复，并返回判定结果及原因标记。"""
+        """通过独立的临时 LLM 会话判断是否应主动发言。
+
+        判定提示词将历史明确包在边界标记内，并说明历史只是数据而非指令；
+        请求使用随机 session ID 且 ``persist=False``，不会写入用户的正式会话。
+        仅把模型输出首个词为 ``REPLY`` 视为肯定，其余、超时或调用异常都按
+        不回复处理，第二个返回值用于日志记录实际判定/失败类别。
+
+        Returns:
+            ``(是否回复, 判定标签)``；无可用模型时标签为空。
+        """
         # 使用独立、非持久化模型请求判定是否回复，并将超时/异常编码为结果。
         provider = self._resolve_judge_provider(event, cfg)
         if provider is None:
@@ -742,7 +785,12 @@ class ActiveReplyPlugin(star.Star):
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
-        """把群聊上下文与角色信息注入到本次 LLM 请求。"""
+        """按功能开关增强本次 LLM 请求，并接管必要的消息发送路径。
+
+        角色信息、群聊历史和记忆是互相独立的增强项，任一项失败不会阻断
+        其他项或原始 LLM 请求。最后安装流式/普通发送包装器作为标签转换的
+        兜底；对可控的群消息关闭流式输出时，装饰钩子仍可执行完整转换。
+        """
         cfg = self.cfg_for_event(event)
         if cfg.role_display_enabled:
             try:
@@ -870,7 +918,14 @@ class ActiveReplyPlugin(star.Star):
     def _inject_context(
         self, event: AstrMessageEvent, req: ProviderRequest, cfg: PluginConfig
     ) -> None:
-        """将群聊历史、互动规则及回复模式说明注入当前模型请求。"""
+        """将去重后的群聊历史和互动规则写入请求上下文。
+
+        普通回复时，当前消息已经由 AstrBot 放入请求，因此若历史末尾对应
+        当前消息就先移除，防止模型看到两遍；主动回复则需要明确告诉模型
+        最新群消息并给出接话要求。React 模式会重建用户提示词以符合“基于
+        群聊记录作出反应”的行为，其余模式只追加 system prompt，尽量不改写
+        框架原有的用户消息内容。
+        """
         # 在普通模式追加历史；React 模式则以历史和当前消息重建完整 prompt。
         origin = event.unified_msg_origin
         chats = self.state.session_chats.get(origin)
@@ -2013,7 +2068,13 @@ class ActiveReplyPlugin(star.Star):
         platform_id: str,
         scope: str,
     ) -> None:
-        """向量化并去重保存关键词触发的记忆，个人事实可提升为全局范围。"""
+        """把用户明确要求记住的内容异步转成长期记忆。
+
+        自动写入前会确认记忆库和 embedding 服务就绪。仅在配置为
+        ``group_first`` 且正文匹配个人事实模式时，才把该记录提升为全局范围；
+        其他内容沿用消息所属群的作用域。最终由 ``_store_memory`` 负责向量化、
+        相似记忆去重以及持久化，因此此方法可以在后台执行而不阻塞消息回复。
+        """
         # 将关键词提取结果向量化、去重后持久化；个人事实可跨群存储。
         ready, reason = self._memory_ready()
         if not ready or self.memory_store is None:
@@ -2058,7 +2119,17 @@ class ActiveReplyPlugin(star.Star):
         origin: str,
         confidence: float | None = None,
     ) -> tuple[int | None, int | None]:
-        """去重后写入一条记忆，返回 (新 id, 命中的相似 id)。"""
+        """将正文编码为向量，按作用域去重后写入 SQLite。
+
+        空正文、空角色集合或存储未初始化时不执行写入；embedding 服务失败
+        也会记录错误并返回空结果。去重只比较相同作用域及可参与该范围的
+        全局记忆，余弦相似度达到 ``0.92`` 时认为已有相近记录，不再重复保存。
+        写入元数据会标明来源、自动写入状态和会话来源，供控制台统计与追踪。
+
+        Returns:
+            ``(新记忆 ID, None)`` 表示成功写入；``(None, 已有记忆 ID)`` 表示
+            判定为重复；无法写入时返回 ``(None, None)``。
+        """
         if not content or not role_ids or self.memory_store is None:
             return None, None
         provider = self._embedding_provider()
@@ -2104,7 +2175,13 @@ class ActiveReplyPlugin(star.Star):
     def _maybe_schedule_extraction(
         self, event: AstrMessageEvent, cfg: PluginConfig
     ) -> None:
-        """达到消息数、时间间隔和历史窗口条件后派发后台记忆抽取。"""
+        """检查自动抽取的节流条件，并复制一段历史交给后台模型处理。
+
+        抽取必须同时满足功能开关、消息数阈值、最小时间间隔和最少历史长度。
+        条件未满足时保留计数供后续消息继续累计；派发成功前将计数清零并记录
+        时间，避免同一窗口重复排队。历史窗口会复制成新列表，防止后续消息
+        修改会话历史时影响已经启动的抽取任务。
+        """
         # 同时满足消息数和最小时间间隔后，复制最近窗口并异步启动模型抽取。
         if not (cfg.memory_rag.enable and cfg.memory_rag.auto_extract_enable):
             return
@@ -2209,7 +2286,13 @@ class ActiveReplyPlugin(star.Star):
     async def _extract_memories(
         self, origin: str, lines: list[str], cfg: PluginConfig
     ) -> None:
-        """调用抽取模型并写入置信度达标、角色有效的候选记忆。"""
+        """从群聊片段抽取长期事实，并过滤不可信或不完整的候选项。
+
+        模型输出先解析成候选数组，再检查最低置信度、角色 ID 是否出现在
+        给定历史中，并根据个人事实/群聊事实规则确定作用域。只有具备有效角色
+        关联的候选才会进入统一写入流程；相似内容由 ``_store_memory`` 再次去重。
+        整个流程在后台运行，模型或数据库错误不会影响当前消息的回复。
+        """
         # 调用抽取模型、筛置信度与已知角色，再按作用域写入或统计重复项。
         ready, reason = self._memory_ready()
         if not ready or self.memory_store is None:
@@ -2486,13 +2569,21 @@ class ActiveReplyPlugin(star.Star):
         """写入一条可检索的长期记忆。
 
         Args:
-            content(string): 必填，记忆正文。
-            related_role_ids(string): 可选，相关角色 ID，JSON 数组或逗号分隔；省略时使用当前发送者。
-            memory_time(string): 可选，Unix 时间戳或 ISO 时间。
-            group_scope(string): 可选，完整群范围，如 aiocqhttp:123456。
-            group_id(string): 可选，群号。
-            platform_id(string): 可选，平台 ID。
-            extra_metadata_json(string): 可选，额外元数据 JSON。
+            event: 当前消息事件；未提供角色 ID 时用于取得当前发送者和默认群范围。
+            content: 必填记忆正文，保存前会去除首尾空白并生成 embedding。
+            related_role_ids: 可选角色 ID，接受 JSON 数组或逗号分隔文本；为空时
+                默认关联当前发送者。角色 ID 用于之后按成员筛选记忆。
+            memory_time: 可选 Unix 秒/毫秒时间戳或 ISO 时间；省略时使用当前时间。
+            group_scope: 可选完整范围，例如 ``aiocqhttp:123456``；显式设置时优先于
+                从事件推导的群范围。
+            group_id: 可选群号，通常与 ``group_scope`` 一起用于精确过滤。
+            platform_id: 可选平台 ID，用于区分不同平台上相同的群号。
+            extra_metadata_json: 可选额外元数据 JSON；合法对象按对象保存，其他
+                JSON 值或无效 JSON 会作为 ``raw`` 字段保留。
+
+        Returns:
+            描述新记录 ID、时间和作用域的 JSON 字符串；校验或存储失败时返回
+            可读的错误文本。此工具不做语义去重，调用方若需去重应使用自动写入流程。
         """
         ready, reason = self._memory_ready()
         if not ready or self.memory_store is None:
@@ -2586,22 +2677,33 @@ class ActiveReplyPlugin(star.Star):
         embedding_recall_k: int = 0,
         ignore_group_id: bool = False,
     ) -> str:
-        """按条件检索长期记忆。
+        """按文本相似度、角色、时间和会话范围检索长期记忆。
+
+        提供 ``query`` 时先将查询文本向量化，数据库在元数据过滤后的有限候选
+        集合上计算余弦相似度，并按召回数量截断；不提供文本时则跳过向量化，
+        依据时间排序。所有筛选参数会被规范化后传入同一次检索；仅当当前群
+        查询无结果、未显式请求跨群且记忆配置允许全局记忆时，才追加全局回退。
 
         Args:
-            query(string): 可选，语义检索文本，为空时按时间排序。
-            related_role_ids(string): 可选，角色 ID，JSON 数组或逗号分隔。
-            role_match_mode(string): 可选，any 或 all。
-            start_time(string): 可选，开始时间。
-            end_time(string): 可选，结束时间。
-            group_scope(string): 可选，完整群范围。
-            group_id(string): 可选，群号。
-            platform_id(string): 可选，平台 ID。
-            sort_by(string): 可选，relevance 或 time。
-            sort_order(string): 可选，desc 或 asc。
-            max_results(number): 可选，返回条数。
-            embedding_recall_k(number): 可选，语义召回条数，<=0 时使用配置默认值。
-            ignore_group_id(boolean): 可选，为 true 时不自动套当前群范围，可跨群读取。
+            event: 当前消息事件，用于推导缺省的平台和群作用域。
+            query: 可选语义检索文本；空字符串表示仅按筛选条件和时间检索。
+            related_role_ids: 可选角色 ID，接受 JSON 数组或逗号分隔文本。
+            role_match_mode: 多个角色的匹配方式；``any`` 命中任一角色，``all`` 要求全部命中。
+            start_time: 可选时间下界，支持 Unix 时间戳或 ISO 时间。
+            end_time: 可选时间上界，支持 Unix 时间戳或 ISO 时间。
+            group_scope: 可选完整群作用域；为空时结合事件与群号生成。
+            group_id: 可选群号过滤条件。
+            platform_id: 可选平台过滤条件。
+            sort_by: ``relevance`` 按相似度排序；``time`` 按记忆时间排序。
+            sort_order: ``desc`` 倒序，``asc`` 正序。
+            max_results: 最多返回记录数；非正值使用配置上限。
+            embedding_recall_k: 语义候选截断数；非正值使用插件配置。
+            ignore_group_id: 为真时不自动限制为当前群，可用于跨群检索。
+
+        Returns:
+            包含筛选条件、命中数量和记忆记录的 JSON 字符串；参数无效或服务
+            不可用时返回可读错误文本。
+
         """
         ready, reason = self._memory_ready()
         if not ready or self.memory_store is None:
@@ -2663,6 +2765,9 @@ class ActiveReplyPlugin(star.Star):
                 logger.error(f"[ActiveReply] 查询向量化失败: {exc}", exc_info=True)
                 return f"生成查询 embedding 失败：{exc}"
 
+        # 群范围和全局回退使用完全相同的角色、时间、排序与数量条件。
+        # 下方的 **search_kwargs 会把这些键值作为同名关键字参数传给检索方法，
+        # 避免两次查询各自维护一份筛选参数而产生不一致。
         search_kwargs: dict[str, Any] = dict(
             query_embedding=query_embedding,
             recall_k=recall,
@@ -2727,6 +2832,15 @@ class ActiveReplyPlugin(star.Star):
         """汇总当前已知的群：平台群列表 + 运行时见过的群 + 已保存配置的群。
 
         平台侧拉取群列表可能较慢，这里做 60 秒缓存，页面上手动刷新会走 force。
+        三类来源互补：平台接口提供群名，运行态能补足本次运行中实际收到消息的群，
+        本地配置则让离线或暂未活跃的已配置群仍可显示。以群号为键合并重复项后，
+        再计算有效的全局/群级配置和是否在当前进程见过消息。
+
+        Args:
+            force: 为真时忽略短期缓存并重新询问平台适配器。
+
+        Returns:
+            按群号排序的面板数据列表；每项包含名称、配置状态和活跃状态。
         """
         now = time.time()
         if not force and self._groups_cache and now - self._groups_cache_at < 60:
