@@ -1,0 +1,361 @@
+{
+  "active_reply": {
+    "description": "消息主动回复",
+    "hint": "主动回复群聊中的用户消息。开启「群聊回复增强 -> React Pattern」后可获得更完整的上下文与智能 @ 效果",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用",
+        "hint": "开启后 Bot 会在群聊中自行判断是否回复，无需被 @",
+        "type": "bool",
+        "default": false
+      },
+      "mode": {
+        "description": "回复方式",
+        "hint": "probability：按概率回复；model_choice：由模型判定是否回复",
+        "type": "string",
+        "options": [
+          "probability",
+          "model_choice"
+        ],
+        "labels": [
+          "概率",
+          "模型判定"
+        ],
+        "default": "probability"
+      },
+      "possibility": {
+        "description": "回复概率",
+        "hint": "当回复方式选择为 probability 时显示。每条消息按该概率触发一次主动回复",
+        "type": "float",
+        "slider": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "condition": {
+          "mode": "probability"
+        },
+        "default": 0.1
+      },
+      "model_history_messages": {
+        "description": "模型判定消息附带",
+        "hint": "当回复方式选择为 model_choice 时显示。判定时附带的额外历史消息条数（0 表示不附带额外消息）",
+        "type": "int",
+        "slider": {
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        "condition": {
+          "mode": "model_choice"
+        },
+        "default": 0
+      },
+      "model_choice_provider_id": {
+        "description": "模型判定提供商",
+        "hint": "当回复方式选择为 model_choice 时显示。用于“是否主动回复”判定，留空使用当前会话默认提供商",
+        "type": "string",
+        "_special": "select_provider",
+        "condition": {
+          "mode": "model_choice"
+        },
+        "default": ""
+      },
+      "trigger_threshold": {
+        "description": "回复触发积累",
+        "hint": "累计的消息到达该条数后触发一次强制回复或模型判定，随后清空积累。probability 模式下若连续未回复条数达到该值则强制回复一次",
+        "type": "int",
+        "slider": {
+          "min": 2,
+          "max": 50,
+          "step": 1
+        },
+        "default": 10
+      },
+      "list_mode": {
+        "description": "禁用名单",
+        "hint": "选择使用黑名单还是白名单来控制主动回复生效的群",
+        "type": "string",
+        "options": [
+          "blacklist",
+          "whitelist"
+        ],
+        "labels": [
+          "黑名单",
+          "白名单"
+        ],
+        "default": "blacklist"
+      },
+      "blacklist": {
+        "description": "黑名单",
+        "hint": "填写 QQ 群号，主动回复功能不会在这些群内生效",
+        "type": "list",
+        "condition": {
+          "list_mode": "blacklist"
+        },
+        "default": []
+      },
+      "whitelist": {
+        "description": "白名单",
+        "hint": "填写 QQ 群号，主动回复功能只会在这些群内生效",
+        "type": "list",
+        "condition": {
+          "list_mode": "whitelist"
+        },
+        "default": []
+      }
+    }
+  },
+  "group_context_enhancement": {
+    "description": "群聊上下文增强",
+    "hint": "以增强格式记录群聊消息并注入 LLM 上下文，为主动回复与智能回复提供依据",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用",
+        "hint": "开启后记录群聊历史并在对话时注入，建议关闭 AstrBot 内置的群聊上下文感知以避免重复注入",
+        "type": "bool",
+        "default": true
+      },
+      "max_messages": {
+        "description": "会话消息上限",
+        "hint": "每个会话保留的最大历史消息条数，超出后丢弃最早的消息",
+        "type": "int",
+        "slider": {
+          "min": 50,
+          "max": 1000,
+          "step": 10
+        },
+        "default": 200
+      },
+      "include_sender_id": {
+        "description": "包含用户信息",
+        "hint": "在历史消息格式中写入发送者用户 ID，智能回复 @ 用户时依赖该 ID",
+        "type": "bool",
+        "default": true
+      },
+      "include_role_tag": {
+        "description": "包含标签",
+        "hint": "在历史消息格式中写入 admin/member 角色标记（基于 AstrBot 管理员列表）",
+        "type": "bool",
+        "default": true
+      },
+      "image_caption": {
+        "description": "图片转述",
+        "hint": "启用图片转述能力。历史默认写入 [Image]，模型可通过工具按需补全描述",
+        "type": "bool",
+        "default": false
+      },
+      "image_caption_provider_id": {
+        "description": "图片转述提供商",
+        "hint": "用于图片转述的 LLM 提供商 ID，留空使用默认提供商",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
+      "image_caption_prompt": {
+        "description": "图片转述文本",
+        "hint": "发送给图片转述模型的提示词",
+        "type": "text",
+        "default": "Please describe the image using Chinese."
+      }
+    }
+  },
+  "group_reply_enhancement": {
+    "description": "群聊回复增强",
+    "hint": "React Pattern 开启后，群聊上下文与回复增强会加强主动回复能力；关闭时本区块不生效",
+    "type": "object",
+    "items": {
+      "react_pattern": {
+        "description": "React Pattern",
+        "hint": "开启后群聊上下文增强与群聊回复增强会以 React 方式加强主动回复能力，关闭不影响主动回复",
+        "type": "bool",
+        "default": false
+      },
+      "role_display": {
+        "description": "用户角色显示",
+        "hint": "在 system_reminder 中注入用户角色（admin/member），需开启 AstrBot 内置用户识别",
+        "type": "bool",
+        "default": true
+      },
+      "smart_reply": {
+        "description": "智能回复",
+        "hint": "开启后 LLM 会根据需求引用对应消息并在回复中 @ 相关用户，解析 <mention id=\"用户ID\"/> 与 <quote id=\"消息ID\"/> 并转换为平台消息组件",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "web_search": {
+    "description": "联网搜索",
+    "hint": "为模型提供 grok_web_search 工具，用于实时检索外部信息。仅使用指定 provider，不跟随当前会话 provider",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用",
+        "hint": "开启后注册并允许调用 grok_web_search",
+        "type": "bool",
+        "default": false
+      },
+      "provider_id": {
+        "description": "搜索提供商 ID",
+        "hint": "用于执行联网搜索的 provider ID，留空时工具会报错并拒绝调用",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
+      "system_prompt": {
+        "description": "搜索系统提示词",
+        "hint": "用于约束搜索结果输出格式（默认要求返回 JSON）",
+        "type": "text",
+        "default": "You are a web research assistant. Use live web search/browsing when answering. Return ONLY a single JSON object with keys: content (string), sources (array of objects with url/title/snippet when possible). Keep content concise and evidence-backed. IMPORTANT: Do NOT use Markdown formatting in the content field - use plain text only."
+      },
+      "timeout_sec": {
+        "description": "搜索超时(秒)",
+        "hint": "单次搜索调用最大等待时间",
+        "type": "float",
+        "slider": {
+          "min": 30,
+          "max": 180,
+          "step": 5
+        },
+        "default": 60
+      },
+      "request_mode": {
+        "description": "请求模式",
+        "hint": "auto 模式会先尝试 responses，失败后回退 chat_completions",
+        "type": "string",
+        "options": [
+          "auto",
+          "responses",
+          "chat_completions"
+        ],
+        "labels": [
+          "自动",
+          "Responses",
+          "Chat Completions"
+        ],
+        "default": "auto"
+      },
+      "base_url_override": {
+        "description": "Base URL 覆盖",
+        "hint": "可选。留空时使用 provider 的 api_base；填写后仅 grok_web_search 使用该 base",
+        "type": "string",
+        "default": ""
+      },
+      "show_sources": {
+        "description": "输出来源",
+        "hint": "开启后在工具返回中附带来源 URL",
+        "type": "bool",
+        "default": false
+      },
+      "max_sources": {
+        "description": "最多来源条数",
+        "hint": "show_sources=true 时生效",
+        "type": "int",
+        "slider": {
+          "min": 1,
+          "max": 20,
+          "step": 1
+        },
+        "default": 5
+      }
+    }
+  },
+  "memory_rag": {
+    "description": "记忆 RAG",
+    "hint": "供 LLM Tool 使用的可检索记忆库，支持 embedding 召回与时间/角色/群聊过滤",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用",
+        "hint": "关闭后将停用 enhance_memory_rag_write / enhance_memory_rag_read",
+        "type": "bool",
+        "default": true
+      },
+      "embedding_provider_id": {
+        "description": "Embedding Provider ID",
+        "hint": "用于记忆向量化的 Embedding 提供商 ID（在 AstrBot 模型提供商中查看），留空时自动使用第一个可用的 embedding provider",
+        "type": "string",
+        "default": ""
+      },
+      "recall_k": {
+        "description": "召回数量",
+        "hint": "当工具调用未指定 embedding_recall_k 时的默认语义召回条数",
+        "type": "int",
+        "slider": {
+          "min": 1,
+          "max": 50,
+          "step": 1
+        },
+        "default": 20
+      },
+      "max_return_results": {
+        "description": "最大返回条数",
+        "hint": "工具单次最多返回多少条结果（防止超长输出）",
+        "type": "int",
+        "slider": {
+          "min": 1,
+          "max": 300,
+          "step": 1
+        },
+        "default": 100
+      }
+    }
+  },
+  "runtime": {
+    "description": "调用配置",
+    "hint": "运行时全局参数，包括 LRU 缓存限制与模型调用超时设置",
+    "type": "object",
+    "items": {
+      "lru_cache": {
+        "description": "LRU 缓存限制",
+        "hint": "限制同时保留的会话来源数量，避免内存持续增长",
+        "type": "object",
+        "items": {
+          "max_origins": {
+            "description": "最大来源数",
+            "hint": "最多保留多少个 unified_msg_origin 状态，超出后淘汰最久未使用的来源",
+            "type": "int",
+            "slider": {
+              "min": 50,
+              "max": 500,
+              "step": 10
+            },
+            "default": 500
+          }
+        }
+      },
+      "timeouts": {
+        "description": "超时设置",
+        "hint": "外部模型调用超时（秒），用于图片转述与 model_choice 判定",
+        "type": "object",
+        "items": {
+          "image_caption_sec": {
+            "description": "图片转述超时(秒)",
+            "hint": "图片转述调用 LLM 的超时时间",
+            "type": "float",
+            "slider": {
+              "min": 10,
+              "max": 120,
+              "step": 1
+            },
+            "default": 45
+          },
+          "model_choice_sec": {
+            "description": "模型判定超时(秒)",
+            "hint": "model_choice 判定调用 LLM 的超时时间",
+            "type": "float",
+            "slider": {
+              "min": 10,
+              "max": 120,
+              "step": 1
+            },
+            "default": 45
+          }
+        }
+      }
+    }
+  }
+}

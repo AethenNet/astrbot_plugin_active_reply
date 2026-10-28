@@ -1,0 +1,12 @@
+line-length = 88
+target-version = "py310"
+
+[lint]
+# 只保留与正确性、可维护性直接相关的规则集；
+# 插件代码大量使用宽泛的 try/except 做降级，不启用 BLE001。
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

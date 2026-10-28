@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>主动回复 · 控制台</title>
+    <link rel="stylesheet" href="./styles.css?v=10" />
+  </head>
+  <body>
+    <!-- 图标库（内联 SVG，避免依赖外部图标字体/emoji） -->
+    <svg class="svg-sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7z"/><path d="M9 12l2 2 4-4"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+      <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></symbol>
+      <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-4-1L3 21l2.1-5a8.4 8.4 0 0 1-1.1-4.5 8.4 8.4 0 0 1 8.4-8.4 8.4 8.4 0 0 1 8.6 8.4z"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5 5h14l2 7v7H3v-7z"/></symbol>
+    </svg>
+    <div class="app-shell">
+      <!-- 顶栏 -->
+      <header class="topbar">
+        <button id="menu-btn" class="icon-btn" aria-label="打开菜单" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-menu"></use></svg></button>
+        <div class="brand">
+          <img class="brand-logo" src="./logo.png" alt="ActiveReply" onerror="this.style.display='none'" />
+          <div class="brand-text">
+            <strong>主动回复</strong>
+            <span id="brand-sub">ActiveReply Console</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span id="theme-chip" class="chip">跟随面板</span>
+          <span id="tz-chip" class="chip mono">-</span>
+        </div>
+      </header>
+
+      <!-- 汉堡菜单 -->
+      <div id="scrim" class="scrim"></div>
+      <aside id="drawer" class="drawer" aria-hidden="true">
+        <div class="drawer-head">
+          <span>功能配置</span>
+          <button id="drawer-close" class="icon-btn" aria-label="关闭菜单"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-item active" data-view="overview"><svg class="icon" aria-hidden="true"><use href="#i-activity"></use></svg>状态</button>
+          <button class="nav-item" data-view="rag"><svg class="icon" aria-hidden="true"><use href="#i-database"></use></svg>记忆 RAG</button>
+        </nav>
+
+        <div class="drawer-section">
+          <div class="drawer-label">
+            <span>群配置</span>
+            <span id="drawer-group-count" class="muted small">0</span>
+          </div>
+          <div id="drawer-groups" class="drawer-groups">
+            <p class="muted small pad">暂无群</p>
+          </div>
+          <button id="drawer-manage-groups" class="drawer-manage" title="打开群配置页，可手动输入群号"><svg class="icon" aria-hidden="true"><use href="#i-users"></use></svg>管理全部群 / 手动输入群号</button>
+        </div>
+
+        <div class="drawer-foot">
+          <button id="drawer-settings" class="drawer-settings" title="直接修改插件全局配置"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>全局设置</button>
+          <p class="muted small" id="drawer-version">v-</p>
+        </div>
+      </aside>
+
+      <!-- 内容区 -->
+      <main class="content">
+        <!-- 状态 -->
+        <section id="view-overview" class="view active">
+          <div class="section-head">
+            <h2>状态</h2>
+            <p class="muted">当前插件状态与记忆库概况</p>
+          </div>
+          <div id="status-grid" class="status-grid"></div>
+          <div class="grid two">
+            <div class="card">
+              <div class="card-head">
+                <h3>记忆库</h3>
+                <span class="muted small">按群统计</span>
+              </div>
+              <div id="overview-stats" class="stat-row"></div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <h3>全局开关</h3>
+                <span class="muted small">来自插件配置</span>
+              </div>
+              <ul id="overview-switches" class="kv"></ul>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>最近有消息的群</h3>
+              <button class="ghost" id="overview-refresh"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新</button>
+            </div>
+            <div id="overview-groups" class="group-strip"></div>
+          </div>
+        </section>
+
+        <!-- 群配置 -->
+        <section id="view-groups" class="view">
+          <div class="section-head">
+            <h2>群配置</h2>
+            <p class="muted">为单个群覆盖主动回复、上下文与回复增强设置</p>
+          </div>
+          <div class="groups-layout">
+            <aside class="group-list card">
+              <div class="group-list-head">
+                <input id="group-search" class="input" type="search" placeholder="搜索群号 / 群名" />
+                <button id="groups-refresh" class="ghost small-btn"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新</button>
+              </div>
+              <div id="group-items" class="group-items">
+                <p class="muted small pad">正在加载…</p>
+              </div>
+            </aside>
+
+            <div class="group-editor card">
+              <div id="group-empty" class="empty">
+                <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="#i-inbox"></use></svg></div>
+                <h3>选择一个群</h3>
+                <p class="muted">左侧列表会显示 AstrBot 已知的群；也可以直接输入群号手动添加</p>
+                <form id="manual-group-form" class="inline-form">
+                  <input id="manual-group-id" class="input mono" placeholder="填写群号，例如 123456789" />
+                  <button type="submit" class="primary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>打开</button>
+                </form>
+              </div>
+
+              <div id="group-panel" class="hidden">
+                <div class="group-panel-head">
+                  <img id="group-avatar" class="group-avatar" alt="" />
+                  <div class="group-title-block">
+                    <h3 id="group-name">未命名群</h3>
+                    <p id="group-id" class="mono muted small">-</p>
+                  </div>
+                  <div class="panel-actions">
+                    <label class="switch-inline" id="independent-wrap" title="为这个群单独覆盖插件全局配置">
+                      <span class="switch">
+                        <input type="checkbox" id="independent-toggle" />
+                        <span class="slider"></span>
+                      </span>
+                      <span>独立配置</span>
+                    </label>
+                    <button id="save-group" class="primary small-btn" title="保存本群的独立配置"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>保存</button>
+                    <button id="reset-group" class="ghost small-btn" title="把本群配置填回插件默认值（需要先保存）"><svg class="icon" aria-hidden="true"><use href="#i-reset"></use></svg>恢复默认</button>
+                  </div>
+                </div>
+                <p id="save-hint" class="muted small group-hint"></p>
+
+                <div class="tabs" id="group-tabs" role="tablist">
+                  <button class="tab active" data-tab="active_reply" role="tab" title="概率 / 模型判定、触发积累、黑白名单"><svg class="icon" aria-hidden="true"><use href="#i-message"></use></svg>消息主动回复</button>
+                  <button class="tab" data-tab="group_context_enhancement" role="tab" title="群聊历史记录与注入、图片转述"><svg class="icon" aria-hidden="true"><use href="#i-layers"></use></svg>群聊上下文增强</button>
+                  <button class="tab" data-tab="group_reply_enhancement" role="tab" title="React Pattern、角色显示、智能 @ 与引用"><svg class="icon" aria-hidden="true"><use href="#i-sparkles"></use></svg>群聊回复增强</button>
+                </div>
+
+                <div id="group-form" class="form-body"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 记忆 RAG -->
+        <section id="view-rag" class="view">
+          <div class="section-head">
+            <h2>记忆 RAG</h2>
+            <p class="muted">浏览、筛选、查看与删除插件写入的长期记忆</p>
+          </div>
+          <div id="rag-stats" class="status-grid"></div>
+
+          <div class="card">
+            <div class="filters">
+              <label class="field">
+                <span>关键词 / ID</span>
+                <input id="rag-keyword" class="input" placeholder="按内容或 ID 搜索" />
+              </label>
+              <label class="field">
+                <span>群范围</span>
+                <select id="rag-scope" class="input"></select>
+              </label>
+              <label class="field">
+                <span>角色 ID</span>
+                <input id="rag-role" class="input mono" placeholder="可选" />
+              </label>
+              <div class="filter-actions">
+                <button id="rag-search" class="primary small-btn"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>筛选</button>
+                <button id="rag-reset" class="ghost small-btn"><svg class="icon" aria-hidden="true"><use href="#i-reset"></use></svg>重置</button>
+                <button id="rag-cleanup" class="ghost small-btn" title="规范化旧记录的时间元数据"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>清理</button>
+                <button id="rag-selftest" class="ghost small-btn" title="写入→读回→检索→删除 一条测试记忆"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg>自检</button>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th class="w-id">ID</th>
+                    <th>内容</th>
+                    <th class="w-scope">群范围</th>
+                    <th class="w-roles">角色</th>
+                    <th class="w-time">时间</th>
+                    <th class="w-act">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="rag-body">
+                  <tr><td colspan="6" class="muted center pad">暂无数据</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="pager">
+              <button id="rag-prev" class="ghost small-btn"><svg class="icon" aria-hidden="true"><use href="#i-left"></use></svg>上一页</button>
+              <span id="rag-page-info" class="muted small">第 1 页</span>
+              <button id="rag-next" class="ghost small-btn">下一页<svg class="icon" aria-hidden="true"><use href="#i-right"></use></svg></button>
+              <label class="inline-select">
+                每页
+                <select id="rag-page-size">
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- 全局设置 -->
+        <section id="view-settings" class="view">
+          <div class="section-head">
+            <h2>全局设置</h2>
+            <p class="muted">直接修改插件的全局配置，保存后立即生效</p>
+          </div>
+          <div class="card group-editor">
+            <div class="group-panel-head">
+              <img class="group-avatar" src="./logo.png" alt="" />
+              <div class="group-title-block">
+                <h3>插件全局配置</h3>
+                <p class="muted small">群独立配置会覆盖这里的对应项</p>
+              </div>
+              <div class="panel-actions">
+                <button id="save-global" class="primary small-btn" title="按 schema 校验并写入 AstrBot 插件配置"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>保存</button>
+                <button id="reset-global" class="ghost small-btn" title="把全局配置填回插件默认值（需要先保存）"><svg class="icon" aria-hidden="true"><use href="#i-reset"></use></svg>恢复默认配置</button>
+              </div>
+            </div>
+            <p id="global-hint" class="muted small group-hint"></p>
+
+            <div class="tabs" id="global-tabs" role="tablist"></div>
+
+            <div id="global-form" class="form-body">
+              <p class="muted small pad">正在加载配置…</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- 详情抽屉 -->
+    <aside id="detail" class="detail" aria-hidden="true">
+      <div class="detail-head">
+        <h3 id="detail-title">记忆详情</h3>
+        <button id="detail-close" class="icon-btn" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+      </div>
+      <pre id="detail-body" class="detail-body mono"></pre>
+    </aside>
+
+    <div id="modal" class="modal" aria-hidden="true">
+      <div class="modal-card">
+        <p id="modal-text"></p>
+        <div class="modal-actions">
+          <button id="modal-cancel" class="ghost"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>取消</button>
+          <button id="modal-ok" class="primary"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>确定</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script type="module" src="./app.js?v=10"></script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 工具缓存
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS / 编辑器
+.DS_Store
+.idea/
+.vscode/
+
+# 运行时数据（实际位于 AstrBot 的 data/ 目录，这里做兜底）
+data/
