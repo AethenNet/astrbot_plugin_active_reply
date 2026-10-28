@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
+  <!-- 控制台由静态 DOM 骨架与 app.js 渲染层组成，通过 AstrBot iframe bridge 请求插件 API。 -->
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -33,6 +34,7 @@
       <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M10 5H3m9 14H3M14 3v4m2 10v4m5-9h-9m9 7h-5m5-14h-7m-6 5v4m0-2H3"/></symbol>
       <symbol id="i-inbox" viewBox="0 0 24 24"><g><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11"/></g></symbol>
     </svg>
+    <!-- 主应用外壳：顶部栏、侧边导航与按需显示的四个业务视图。 -->
     <div class="app-shell">
       <!-- 顶栏 -->
       <header class="topbar">
@@ -292,7 +294,7 @@
       </main>
     </div>
 
-    <!-- 详情抽屉 -->
+    <!-- 详情抽屉承载记忆 JSON 与 RAG 自检结果，由前端统一控制开合。 -->
     <aside id="detail" class="detail" aria-hidden="true">
       <div class="detail-head">
         <h3 id="detail-title">记忆详情</h3>

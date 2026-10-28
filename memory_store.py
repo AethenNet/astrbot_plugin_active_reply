@@ -35,6 +35,7 @@ class MemoryStore:
         default_scan_limit: int = DEFAULT_SCAN_LIMIT,
         display_timezone: str = "Asia/Shanghai",
     ) -> None:
+        # 建立数据库目录与 schema，随后将历史群范围格式迁移到规范形式。
         self.db_path = Path(db_path)
         self.default_scan_limit = max(1, int(default_scan_limit))
         self._lock = threading.RLock()
@@ -48,12 +49,14 @@ class MemoryStore:
     # 基础设施
     # ------------------------------------------------------------------ #
     def _connect(self) -> sqlite3.Connection:
+        # 每次操作独立连接，并开启外键以保证删除记忆时同步删除角色关联。
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def _init_schema(self) -> None:
+        # 创建记忆主表、角色关联表及常用筛选索引；已有数据库保持兼容。
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock, closing(self._connect()) as conn, conn:
             conn.executescript(
@@ -144,6 +147,7 @@ class MemoryStore:
         return name
 
     def format_timestamp_iso(self, timestamp: float | int) -> str:
+        # 将 Unix 秒时间戳按当前展示时区格式化为 ISO 8601 字符串。
         return datetime.fromtimestamp(float(timestamp), tz=self._tzinfo).isoformat()
 
     # ------------------------------------------------------------------ #
@@ -151,6 +155,7 @@ class MemoryStore:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _normalize_role_ids(role_ids: list[str] | tuple[str, ...]) -> list[str]:
+        # 清理空 ID 并按首次出现顺序去重，供关系表写入使用。
         result: list[str] = []
         seen: set[str] = set()
         for raw in role_ids or ():
@@ -163,6 +168,7 @@ class MemoryStore:
 
     @staticmethod
     def _parse_embedding(raw: str | None) -> list[float]:
+        # 将数据库中的 JSON 向量还原；损坏或不符合数组格式时返回空向量。
         if not raw:
             return []
         try:
@@ -181,6 +187,7 @@ class MemoryStore:
 
     @staticmethod
     def _parse_metadata(raw: str | None) -> dict[str, Any]:
+        # 将扩展元数据安全还原为字典，未知或损坏内容按空元数据处理。
         if not raw:
             return {}
         try:
@@ -191,6 +198,7 @@ class MemoryStore:
 
     @staticmethod
     def _cosine_similarity(left: list[float], right: list[float]) -> float:
+        # 计算等维向量的余弦相似度；空向量、零向量和维数不一致视为无效。
         if not left or not right or len(left) != len(right):
             return -1.0
         dot = norm_left = norm_right = 0.0
@@ -204,12 +212,14 @@ class MemoryStore:
 
     @staticmethod
     def _normalize_timestamp(raw: float | int) -> tuple[float, bool]:
+        # 兼容秒/毫秒两种 Unix 时间戳，第二个返回值表示是否执行了换算。
         value = float(raw)
         if value > 1e12:  # 毫秒时间戳
             return value / 1000.0, True
         return value, False
 
     def _time_fields(self, timestamp: float) -> dict[str, Any]:
+        # 生成 API/页面共用的时间字段，明确携带展示时区名称。
         dt = datetime.fromtimestamp(float(timestamp), tz=self._tzinfo)
         return {
             "memory_time": float(timestamp),
@@ -218,6 +228,7 @@ class MemoryStore:
         }
 
     def _row_to_item(self, row: sqlite3.Row, role_ids: list[str]) -> dict[str, Any]:
+        # 把 SQLite 行转换为不依赖 sqlite3.Row 的普通 API 字典。
         item: dict[str, Any] = {
             "memory_id": int(row["id"]),
             "content": str(row["content"]),
@@ -248,6 +259,7 @@ class MemoryStore:
         platform_id: str = "",
         extra_metadata: dict[str, Any] | None = None,
     ) -> int:
+        # 校验正文、角色与 embedding 后，在同一事务写入主记录和角色关联。
         clean_content = str(content or "").strip()
         if not clean_content:
             raise ValueError("content 不能为空")
@@ -293,6 +305,7 @@ class MemoryStore:
             return memory_id
 
     def get_memory(self, memory_id: int) -> dict[str, Any] | None:
+        # 按主键取一条完整记忆；无效 ID 或不存在时返回 None。
         try:
             target = int(memory_id)
         except (TypeError, ValueError):
@@ -325,6 +338,7 @@ class MemoryStore:
         group_scope: str = "",
         role_id: str = "",
     ) -> dict[str, Any]:
+        # 组合关键词、群范围和角色条件分页查询，并批量装配角色列表。
         page = max(1, int(page))
         page_size = max(1, min(200, int(page_size)))
         offset = (page - 1) * page_size
@@ -394,6 +408,7 @@ class MemoryStore:
         }
 
     def delete_memory(self, memory_id: int) -> bool:
+        # 删除主记录并依赖外键级联清理关联角色，返回是否删除到记录。
         try:
             target = int(memory_id)
         except (TypeError, ValueError):
@@ -461,6 +476,7 @@ class MemoryStore:
         return counts
 
     def count_since(self, timestamp: float) -> int:
+        # 统计指定 Unix 时间之后的记忆数，用于自动记忆面板的今日新增量。
         with self._lock, closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT COUNT(*) AS cnt FROM memories WHERE memory_time >= ?",
@@ -469,6 +485,7 @@ class MemoryStore:
         return int(row["cnt"]) if row else 0
 
     def get_stats(self) -> dict[str, Any]:
+        # 汇总条数、群/角色维度以及时间跨度供控制台状态卡展示。
         with self._lock, closing(self._connect()) as conn:
             total_row = conn.execute(
                 "SELECT COUNT(*) AS total FROM memories"
@@ -517,6 +534,7 @@ class MemoryStore:
         }
 
     def list_group_scopes(self) -> list[str]:
+        # 返回有限数量的非空作用域，供记忆筛选下拉框使用。
         with self._lock, closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT DISTINCT group_scope FROM memories "

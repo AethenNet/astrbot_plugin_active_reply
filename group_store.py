@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .config_model import (
+from config_model import (
     GROUP_OVERRIDE_FIELDS,
     coerce_group_value,
     get_by_path,
@@ -29,6 +29,7 @@ class GroupStore:
     """按群保存独立配置覆盖项。"""
 
     def __init__(self, path: Path | str) -> None:
+        # 初始化线程安全的内存快照，并立即尝试从 JSON 文件加载现有配置。
         self.path = Path(path)
         self._lock = threading.RLock()
         self._data: dict[str, dict[str, Any]] = {}
@@ -38,6 +39,7 @@ class GroupStore:
     # 读写
     # ------------------------------------------------------------------ #
     def _load(self) -> None:
+        # 读取旧配置；文件不存在或损坏时从空映射启动，不阻塞插件启动。
         if not self.path.exists():
             self._data = {}
             return
@@ -50,6 +52,7 @@ class GroupStore:
         self._data = groups if isinstance(groups, dict) else {}
 
     def _save(self) -> None:
+        # 先写同目录临时文件再替换目标，降低进程中断导致 JSON 被截断的风险。
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"version": STORE_VERSION, "groups": self._data}
         temp = self.path.with_suffix(".tmp")
@@ -62,6 +65,7 @@ class GroupStore:
     # 查询
     # ------------------------------------------------------------------ #
     def is_independent(self, group_id: str) -> bool:
+        # 仅当群记录明确启用独立配置时返回 True。
         entry = self._data.get(str(group_id))
         return bool(entry and entry.get("independent"))
 
@@ -74,6 +78,7 @@ class GroupStore:
         return overrides if isinstance(overrides, dict) else {}
 
     def get_meta(self, group_id: str) -> dict[str, Any]:
+        # 返回面板需要的状态、最近更新时间与可读备注，不暴露内部配置对象。
         entry = self._data.get(str(group_id)) or {}
         return {
             "independent": bool(entry.get("independent")),
@@ -82,6 +87,7 @@ class GroupStore:
         }
 
     def known_groups(self) -> list[str]:
+        # 返回曾保存过元数据或覆盖值的群号，保证面板可重新找到这些群。
         return sorted(self._data.keys())
 
     # ------------------------------------------------------------------ #
@@ -122,6 +128,7 @@ class GroupStore:
         return nested
 
     def set_independent(self, group_id: str, independent: bool, note: str = "") -> None:
+        # 切换跟随全局/独立状态；关闭后若没有覆盖值则移除空记录。
         group_id = str(group_id or "").strip()
         if not group_id:
             raise ValueError("group_id 不能为空")
@@ -136,6 +143,7 @@ class GroupStore:
             self._save()
 
     def set_note(self, group_id: str, note: str) -> None:
+        # 更新群的本地展示备注，不改变其独立配置启用状态。
         group_id = str(group_id or "").strip()
         if not group_id:
             return
@@ -146,6 +154,7 @@ class GroupStore:
             self._save()
 
     def remove(self, group_id: str) -> bool:
+        # 删除群的全部保存数据；返回是否确实存在并移除了记录。
         with self._lock:
             removed = self._data.pop(str(group_id), None) is not None
             if removed:

@@ -13,6 +13,7 @@ class RuntimeState:
     """按会话来源隔离的运行时状态容器。"""
 
     def __init__(self) -> None:
+        # 按 unified_msg_origin 隔离会话相关数据，避免不同群的状态相互混用。
         # 群聊历史文本（每条一行，已格式化）
         self.session_chats: dict[str, list[str]] = defaultdict(list)
         # 消息 ID -> 发送者 ID，用于校验 @ / 引用的目标是否真实存在
@@ -45,6 +46,7 @@ class RuntimeState:
     # 来源生命周期
     # ------------------------------------------------------------------ #
     def _evict_origin(self, origin: str) -> None:
+        # 清除来源关联的所有短期数据；debug_origins 的生命周期由插件管理。
         self.session_chats.pop(origin, None)
         self.message_senders.pop(origin, None)
         self.image_registry.pop(origin, None)
@@ -89,19 +91,23 @@ class RuntimeState:
         bucket["calls"] += 1
 
     def log_line(self, origin: str, line: str) -> None:
+        # 忽略空日志，防止调试报告出现无意义的空条目。
         if line:
             self.turn_logs[origin].append(str(line))
 
     def set_debug(self, origin: str, enabled: bool) -> None:
+        # 调整该来源的 token 调试状态；该集合只存在于当前进程。
         if enabled:
             self.debug_origins.add(origin)
         else:
             self.debug_origins.discard(origin)
 
     def is_debug(self, origin: str) -> bool:
+        # 查询当前来源是否启用回复调试报告。
         return origin in self.debug_origins
 
     def cleanup_origin(self, origin: str) -> None:
+        # 完整清理来源状态并将其从 LRU 队列移除。
         self._evict_origin(origin)
         self.origin_lru.pop(origin, None)
 
@@ -118,6 +124,7 @@ class RuntimeState:
         return removed
 
     def remember_message(self, origin: str, msg_id: str, sender_id: str) -> None:
+        # 保存消息与发送者关联供标签校验，并限制映射最多保留 2000 条。
         if not msg_id:
             return
         registry = self.message_senders[origin]
@@ -147,11 +154,14 @@ class RuntimeState:
         }
 
     def known_sender(self, origin: str, msg_id: str) -> str:
+        # 查询消息对应的发送者；未知消息返回空字符串。
         return self.message_senders.get(origin, {}).get(str(msg_id), "")
 
     def reset_counter(self, origin: str) -> None:
+        # 清零当前会话的主动回复累计值。
         self.reply_counters[origin] = 0
 
     def bump_counter(self, origin: str) -> int:
+        # 累加当前会话的主动回复计数并返回更新后的值。
         self.reply_counters[origin] = self.reply_counters.get(origin, 0) + 1
         return self.reply_counters[origin]

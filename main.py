@@ -38,6 +38,7 @@ except ImportError:  # pragma: no cover - 兼容更早的 4.x
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
     def get_astrbot_plugin_data_path() -> str:
+        # 旧版 AstrBot 没有插件专属目录 helper，兼容性回退到 data/plugin_data。
         return str(Path(get_astrbot_data_path()) / "plugin_data")
 
 
@@ -45,7 +46,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.utils.io import download_image_by_url
 from mcp import types as mcp_types
 
-from .config_model import (
+from config_model import (
     DEFAULT_IMAGE_CAPTION_PROMPT,
     PluginConfig,
     active_reply_allowed,
@@ -53,11 +54,11 @@ from .config_model import (
     deep_merge,
     parse_plugin_config,
 )
-from .group_store import GroupStore
-from .memory_store import MemoryStore
-from .page_api import PageApi
-from .runtime_state import RuntimeState
-from .tags import (
+from group_store import GroupStore
+from memory_store import MemoryStore
+from page_api import PageApi
+from runtime_state import RuntimeState
+from tags import (
     bounded_chat_history,
     build_interaction_instructions,
     clean_text_for_history,
@@ -167,6 +168,7 @@ class ActiveReplyPlugin(star.Star):
     """AstrBot 主动回复插件入口。"""
 
     def __init__(self, context: star.Context, config: dict | None = None) -> None:
+        # 初始化内存态、两类持久化存储和控制台接口；记忆库初始化失败不阻止插件主体加载。
         super().__init__(context, config)
         self.config = config or {}
         self.state = RuntimeState()
@@ -201,6 +203,7 @@ class ActiveReplyPlugin(star.Star):
     # 配置与上下文工具
     # ------------------------------------------------------------------ #
     def _resolve_timezone_name(self) -> str:
+        # 读取 AstrBot 全局时区，缺失或配置对象不可用时使用上海时区。
         try:
             base_cfg = self.context.get_config()
         except Exception:
@@ -210,6 +213,7 @@ class ActiveReplyPlugin(star.Star):
         return str(base_cfg.get("timezone") or "").strip() or "Asia/Shanghai"
 
     def _tzinfo(self) -> datetime.tzinfo:
+        # 将时区名称转为 datetime 可用对象；无效名称回退到 UTC+8。
         try:
             return ZoneInfo(self._resolve_timezone_name())
         except Exception:
@@ -217,6 +221,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _group_id(event: AstrMessageEvent) -> str:
+        # 只从群消息事件取群 ID，私聊及接口异常一律返回空字符串。
         try:
             if event.get_message_type() != MessageType.GROUP_MESSAGE:
                 return ""
@@ -225,6 +230,7 @@ class ActiveReplyPlugin(star.Star):
             return ""
 
     def _global_cfg(self) -> PluginConfig:
+        # 每次从当前配置解析不可变模型，使页面保存后无需重载即可生效。
         return parse_plugin_config(self.config)
 
     def cfg_for_event(self, event: AstrMessageEvent) -> PluginConfig:
@@ -247,9 +253,11 @@ class ActiveReplyPlugin(star.Star):
         self._groups_cache_at = 0.0
 
     def _touch(self, origin: str, cfg: PluginConfig) -> None:
+        # 更新来源的 LRU 使用顺序，并按运行配置淘汰过期来源。
         self.state.touch_origin(origin, cfg.runtime.max_origins)
 
     def _platform_id(self, event: AstrMessageEvent) -> str:
+        # 优先取平台 ID，兼容仅暴露平台名称的适配器实现。
         try:
             return str(event.get_platform_id() or event.get_platform_name() or "")
         except Exception:
@@ -283,6 +291,7 @@ class ActiveReplyPlugin(star.Star):
     # ------------------------------------------------------------------ #
     @filter.on_astrbot_loaded()
     async def on_astrbot_loaded(self) -> None:
+        # 插件加载后同步记忆展示时区，并输出当前关键功能开关。
         cfg = self._global_cfg()
         if self.memory_store is not None:
             timezone_name = self._resolve_timezone_name()
@@ -301,12 +310,14 @@ class ActiveReplyPlugin(star.Star):
         )
 
     async def terminate(self) -> None:
+        # 插件卸载生命周期钩子；当前存储操作均由短连接负责关闭。
         logger.info("[ActiveReply] 插件已卸载")
 
     # ------------------------------------------------------------------ #
     # 页面后端
     # ------------------------------------------------------------------ #
     def _register_web_apis(self) -> None:
+        # 将 PageApi 的处理器注册到 AstrBot 插件视图可访问的路由。
         routes: list[tuple[str, Any, list[str], str]] = [
             (f"/{PLUGIN_NAME}/overview", self.page_api.overview, ["GET"], "概览"),
             (f"/{PLUGIN_NAME}/config", self.page_api.get_config, ["GET"], "全局配置"),
@@ -384,6 +395,7 @@ class ActiveReplyPlugin(star.Star):
     # 消息记录
     # ------------------------------------------------------------------ #
     def _record_message(self, event: AstrMessageEvent, cfg: PluginConfig) -> None:
+        # 序列化当前群消息及其引用、图片和 @ 信息，同时更新校验注册表。
         origin = event.unified_msg_origin
         ctx_cfg = cfg.group_context
         now_text = datetime.datetime.now(self._tzinfo()).strftime("%H:%M:%S")
@@ -611,6 +623,7 @@ class ActiveReplyPlugin(star.Star):
     def _resolve_judge_provider(
         self, event: AstrMessageEvent, cfg: PluginConfig
     ) -> Provider | None:
+        # 优先用显式判定提供商；无效或留空时回退到当前会话提供商。
         provider_id = cfg.active_reply.model_choice_provider_id
         if provider_id:
             provider = self.context.get_provider_by_id(provider_id)
@@ -653,6 +666,7 @@ class ActiveReplyPlugin(star.Star):
     async def _judge(
         self, event: AstrMessageEvent, cfg: PluginConfig, *, reason: str
     ) -> tuple[bool, str]:
+        # 使用独立、非持久化模型请求判定是否回复，并将超时/异常编码为结果。
         provider = self._resolve_judge_provider(event, cfg)
         if provider is None:
             logger.error("[ActiveReply] 没有可用的判定提供商")
@@ -837,6 +851,7 @@ class ActiveReplyPlugin(star.Star):
     def _inject_context(
         self, event: AstrMessageEvent, req: ProviderRequest, cfg: PluginConfig
     ) -> None:
+        # 在普通模式追加历史；React 模式则以历史和当前消息重建完整 prompt。
         origin = event.unified_msg_origin
         chats = self.state.session_chats.get(origin)
         if not chats:
@@ -936,7 +951,9 @@ class ActiveReplyPlugin(star.Star):
         plugin = self
 
         async def patched(stream, use_fallback: bool = False):
+            # 包装流式迭代器，在每个文本片段发送前复用标签转换器。
             async def wrapped():
+                # 保留无法处理的 chunk，仅丢弃转换后已无正文的标签片段。
                 async for chunk in stream:
                     try:
                         keep = plugin._transform_stream_chunk(event, cfg, chunk)
@@ -965,6 +982,7 @@ class ActiveReplyPlugin(star.Star):
         plugin = self
 
         async def patched(message):
+            # 在 AstrBot 原发送方法之前执行最后一道消息标签清理。
             try:
                 message = plugin._transform_outgoing(event, cfg, message)
             except Exception as exc:  # 兜底失败不能影响正常发送
@@ -1107,6 +1125,7 @@ class ActiveReplyPlugin(star.Star):
             logger.debug(f"[ActiveReply] 发送调试报告失败: {exc}")
 
     def _usage_lines(self, origin: str) -> list[str]:
+        # 将本轮 token 分类用量汇总为调试转发中可读的文本行。
         bucket = self.state.turn_usage.get(origin) or {}
         cached = int(bucket.get("input_cached", 0) or 0)
         other = int(bucket.get("input_other", 0) or 0)
@@ -1127,6 +1146,7 @@ class ActiveReplyPlugin(star.Star):
         return lines
 
     async def _send_report(self, event: AstrMessageEvent, report: dict) -> None:
+        # 把判定日志和用量统计打包为平台支持的合并转发消息。
         lines = list(report.get("logs") or [])
         lines.append("")
         lines.extend(self._usage_lines(event.unified_msg_origin))
@@ -1287,6 +1307,7 @@ class ActiveReplyPlugin(star.Star):
     async def _run_web_search(
         self, event: AstrMessageEvent, query: str, cfg: PluginConfig
     ) -> dict[str, Any]:
+        # 按配置尝试兼容端点，解析成功响应并收集正文、来源与耗时。
         provider = self._resolve_search_provider(cfg)
         if provider is None:
             return {
@@ -1370,6 +1391,7 @@ class ActiveReplyPlugin(star.Star):
         return last_error
 
     def _resolve_search_provider(self, cfg: PluginConfig) -> Provider | None:
+        # 搜索固定使用显式配置的 provider，不回退到会话 provider。
         provider_id = cfg.web_search.provider_id
         if not provider_id:
             return None
@@ -1381,6 +1403,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _normalize_base_url(raw: str) -> str:
+        # 规范 provider 基址，去除尾斜杠与已有的 /v1 后缀。
         base = str(raw or "").strip().rstrip("/")
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
@@ -1388,12 +1411,14 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _join_url(base: str, path: str) -> str:
+        # 拼接相对 API 路径，同时允许配置直接提供完整绝对 URL。
         if path.startswith("http://") or path.startswith("https://"):
             return path
         return f"{base.rstrip('/')}/{path.lstrip('/')}"
 
     @staticmethod
     def _provider_api_key(provider: Provider) -> str:
+        # 兼容 provider 的当前密钥接口与 provider_config 中的密钥列表。
         getter = getattr(provider, "get_current_key", None)
         if callable(getter):
             try:
@@ -1413,6 +1438,7 @@ class ActiveReplyPlugin(star.Star):
     def _build_search_requests(
         self, provider: Provider, query: str, cfg: PluginConfig
     ) -> tuple[list[dict[str, Any]], str]:
+        # 根据请求模式构造 Responses 或 Chat Completions 格式的请求候选。
         provider_cfg = (
             provider.provider_config
             if isinstance(getattr(provider, "provider_config", None), dict)
@@ -1503,6 +1529,7 @@ class ActiveReplyPlugin(star.Star):
     def _parse_search_payload(
         mode: str, raw_text: str, content_type: str
     ) -> dict[str, Any] | None:
+        # 同时解析普通 JSON 与 Chat Completions SSE，并合并流式文本片段。
         text = str(raw_text or "").strip()
         if not text:
             return None
@@ -1540,6 +1567,7 @@ class ActiveReplyPlugin(star.Star):
     def _extract_search_result(
         cls, mode: str, payload: dict[str, Any]
     ) -> tuple[str, list[dict[str, str]]]:
+        # 从两种协议响应中统一提取纯文本正文与可引用来源列表。
         sources: list[dict[str, str]] = []
         if mode == "responses":
             texts: list[str] = []
@@ -1599,6 +1627,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _normalize_sources(raw: Any) -> list[dict[str, str]]:
+        # 过滤非法 URL 并统一来源字段，防止页面/工具返回无效链接。
         result: list[dict[str, str]] = []
         if not isinstance(raw, list):
             return result
@@ -1619,6 +1648,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _try_parse_json_object(text: str) -> dict[str, Any] | None:
+        # 兼容裸 JSON 与 Markdown JSON 代码块，提取搜索模型的结构化输出。
         candidate = str(text or "").strip()
         if not candidate:
             return None
@@ -1638,6 +1668,7 @@ class ActiveReplyPlugin(star.Star):
         return None
 
     def _format_search_result(self, result: dict[str, Any], cfg: PluginConfig) -> str:
+        # 根据 show_sources 与 max_sources 决定工具结果中是否显示来源。
         lines = [f"搜索结果：\n{result.get('content', '')}"]
         sources = result.get("sources") or []
         if cfg.web_search.show_sources and sources:
@@ -1796,6 +1827,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _text_result(text: str) -> mcp_types.CallToolResult:
+        # 将普通文本包装为 MCP 工具标准的文本内容结构。
         return mcp_types.CallToolResult(
             content=[mcp_types.TextContent(type="text", text=str(text or ""))]
         )
@@ -1803,6 +1835,7 @@ class ActiveReplyPlugin(star.Star):
     async def _caption_image(
         self, image_ref: str, provider_id: str, prompt: str, timeout: float
     ) -> str:
+        # 调用指定或当前会话模型描述图片，使用独立会话且不写入聊天记录。
         if provider_id:
             provider = self.context.get_provider_by_id(provider_id)
         else:
@@ -1822,6 +1855,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     async def _resolve_image_ref(image_ref: str) -> str:
+        # 将本地文件 URI/路径或 HTTP 图片地址解析为本地文件路径。
         reference = str(image_ref or "").strip()
         if reference.startswith("file://"):
             reference = reference[7:]
@@ -1835,6 +1869,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _encode_image(image_path: str) -> tuple[str, str]:
+        # 检查图片存在、非空且不超过 12 MiB，再编码为 Base64 与 MIME 类型。
         path = Path(image_path)
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"图片不存在: {image_path}")
@@ -1851,6 +1886,7 @@ class ActiveReplyPlugin(star.Star):
     def _write_caption_to_history(
         self, origin: str, msg_id: str, image_index: int, caption: str
     ) -> bool:
+        # 精确替换指定消息中对应序号的 [Image] 标记，并保留其他历史内容。
         chats = self.state.session_chats.get(origin)
         if not chats:
             return False
@@ -1877,6 +1913,7 @@ class ActiveReplyPlugin(star.Star):
     # 长期记忆：自动兜底写入
     # ------------------------------------------------------------------ #
     def _schedule_auto_memory(self, event: AstrMessageEvent, cfg: PluginConfig) -> None:
+        # 检测用户明确的“记住”表达并派发后台写入任务，不阻塞消息处理。
         """用户明确说「记住…」时，后台写一条记忆，不阻塞回复。"""
         text = str(event.message_str or "").strip()
         if not text or not any(word in text for word in MEMORY_KEYWORDS):
@@ -1915,6 +1952,7 @@ class ActiveReplyPlugin(star.Star):
         platform_id: str,
         scope: str,
     ) -> None:
+        # 将关键词提取结果向量化、去重后持久化；个人事实可跨群存储。
         ready, reason = self._memory_ready()
         if not ready or self.memory_store is None:
             logger.info("[ActiveReply] 记忆自动写入跳过：%s", reason)
@@ -2004,6 +2042,7 @@ class ActiveReplyPlugin(star.Star):
     def _maybe_schedule_extraction(
         self, event: AstrMessageEvent, cfg: PluginConfig
     ) -> None:
+        # 同时满足消息数和最小时间间隔后，复制最近窗口并异步启动模型抽取。
         if not (cfg.memory_rag.enable and cfg.memory_rag.auto_extract_enable):
             return
         origin = event.unified_msg_origin
@@ -2024,6 +2063,7 @@ class ActiveReplyPlugin(star.Star):
         asyncio.create_task(self._extract_memories(origin, list(window), cfg))
 
     def _extract_provider(self, origin: str, cfg: PluginConfig) -> Provider | None:
+        # 后台抽取优先使用专用模型，未配置或无效时回退到会话模型。
         provider_id = str(cfg.memory_rag.auto_extract_provider_id or "").strip()
         if provider_id:
             try:
@@ -2044,6 +2084,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _parse_extraction_output(text: str) -> list[dict[str, Any]]:
+        # 从模型输出中恢复 JSON 候选，并规范正文、置信度、作用域与角色 ID。
         raw = str(text or "").strip()
         if not raw:
             return []
@@ -2091,6 +2132,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _sender_ids_from_history(lines: list[str]) -> list[str]:
+        # 从格式化历史中收集出现过的 QQ ID，供候选角色白名单校验。
         ids: list[str] = []
         for line in lines:
             for match in re.finditer(r"/(\d{4,12})/", line):
@@ -2101,6 +2143,7 @@ class ActiveReplyPlugin(star.Star):
     async def _extract_memories(
         self, origin: str, lines: list[str], cfg: PluginConfig
     ) -> None:
+        # 调用抽取模型、筛置信度与已知角色，再按作用域写入或统计重复项。
         ready, reason = self._memory_ready()
         if not ready or self.memory_store is None:
             logger.info("[ActiveReply] 记忆抽取跳过：%s", reason)
@@ -2170,6 +2213,7 @@ class ActiveReplyPlugin(star.Star):
         )
 
     def _memory_ready(self) -> tuple[bool, str]:
+        # 检查长期记忆总开关和 SQLite 存储可用性，返回可读失败原因。
         cfg = self._global_cfg()
         if not cfg.memory_rag.enable:
             return False, "记忆 RAG 已在插件配置中关闭。"
@@ -2234,6 +2278,7 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _parse_role_ids(raw: str) -> list[str]:
+        # 接受 JSON 数组、逗号/空格分隔字符串，并返回去重后的角色 ID。
         text = str(raw or "").strip()
         if not text:
             return []
@@ -2255,6 +2300,7 @@ class ActiveReplyPlugin(star.Star):
         return result
 
     def _parse_timestamp(self, raw: str) -> float | None:
+        # 解析秒/毫秒时间戳、常见日期格式及 ISO 时间，并应用插件展示时区。
         text = str(raw or "").strip()
         if not text:
             return None
@@ -2302,11 +2348,13 @@ class ActiveReplyPlugin(star.Star):
 
     @staticmethod
     def _platform_id_from_origin(origin: str) -> str:
+        # 从 AstrBot unified_msg_origin 中拆出平台段。
         parts = str(origin or "").split(":")
         return parts[0] if len(parts) >= 3 else ""
 
     @staticmethod
     def _group_id_from_origin(origin: str) -> str:
+        # 从 AstrBot unified_msg_origin 的末段提取群号。
         parts = str(origin or "").split(":")
         return parts[-1] if len(parts) >= 3 else ""
 
@@ -2330,6 +2378,7 @@ class ActiveReplyPlugin(star.Star):
     def _resolve_memory_scope(
         self, event: AstrMessageEvent, group_scope: str, group_id: str, platform_id: str
     ) -> tuple[str, str, str]:
+        # 显式 scope 优先且独立使用；否则从事件补足群号和平台后生成规范 scope。
         explicit_scope = str(group_scope or "").strip()
         explicit_group = str(group_id or "").strip()
         explicit_platform = str(platform_id or "").strip()

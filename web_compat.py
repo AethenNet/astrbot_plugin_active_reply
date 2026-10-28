@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - 兼容旧版本
 
 
 def _query_source() -> Any:
+    # 新版请求对象使用 query，旧版 Quart 使用 args；均不可用时返回空映射。
     if _request is None:
         return {}
     return getattr(_request, "query", None) or getattr(_request, "args", None) or {}
@@ -66,6 +67,7 @@ async def read_json(default: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def ok(data: Any = None, **extra: Any) -> dict[str, Any]:
+    # 页面接口统一用 success 字段传递成功状态，便于前端跨版本处理。
     payload: dict[str, Any] = {"success": True}
     if data is not None:
         payload["data"] = data
@@ -74,4 +76,5 @@ def ok(data: Any = None, **extra: Any) -> dict[str, Any]:
 
 
 def fail(message: str) -> dict[str, Any]:
+    # 错误也采用稳定 JSON 结构，由页面统一显示 error 文本。
     return {"success": False, "error": str(message)}
