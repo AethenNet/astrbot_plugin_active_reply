@@ -1,7 +1,10 @@
-"""插件页面（视图）后端接口。
+"""插件控制台页面的后端接口与数据整形层。
 
-所有 handler 都返回 ``{"success": ..., "data": ...}`` 形式的 JSON，
-由 ``views/console`` 下的前端通过 ``window.AstrBotPluginView`` bridge 调用。
+各 handler 通过 ``web_compat`` 读取请求并返回统一 JSON，不直接操作 HTTP
+响应对象。全局设置依据 ``_conf_schema.json`` 过滤并转换提交字段；群设置只允许
+配置模型声明的覆盖字段；记忆管理接口则将 SQLite 存储结果加工成控制台需要的
+分页、统计、自检和清理数据。前端由 ``views/console`` 下的脚本通过 AstrBot
+插件视图 bridge 调用这些处理器。
 """
 
 from __future__ import annotations
@@ -26,7 +29,12 @@ from web_compat import fail, ok, query_get, read_json
 
 
 class PageApi:
-    """页面后端处理器集合。"""
+    """将控制台路由操作映射到插件配置、存储和运行状态的适配器。
+
+    实例不拥有独立业务状态，而是引用插件对象并委托给其配置模型、群配置仓库、
+    记忆存储和运行态。响应使用 ``ok``/``fail`` 统一包装，避免每个端点自行
+    决定错误结构或重复实现配置校验。
+    """
 
     def __init__(self, plugin: Any) -> None:
         """保存插件实例，以便各页面处理器访问配置、存储和运行状态。"""

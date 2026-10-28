@@ -10,7 +10,13 @@ from collections import OrderedDict, defaultdict
 
 
 class RuntimeState:
-    """按会话来源隔离的运行时状态容器。"""
+    """管理进程内短期数据，并按 AstrBot 会话来源隔离所有记录。
+
+    该对象保存群历史、消息发送者索引、图片缓存、用量、调试日志和自动记忆
+    抽取节流状态，不负责长期持久化。来源进入 LRU 队列后，超过配置上限时
+    会连同各映射中的该来源数据一起淘汰；消息索引与昵称索引另有局部上限，
+    防止单个长期活跃群持续增长。
+    """
 
     def __init__(self) -> None:
         """创建所有以会话来源为键的进程内状态映射。"""
@@ -61,7 +67,13 @@ class RuntimeState:
         self.last_extract_at.pop(origin, None)
 
     def touch_origin(self, origin: str, max_origins: int) -> None:
-        """标记来源被使用，并在超出上限时淘汰最久未使用的来源。"""
+        """刷新来源的最近使用顺序，并按来源总数上限执行 LRU 淘汰。
+
+        ``OrderedDict`` 左端代表最久未使用的会话。每次触达会先移除旧位置，
+        再插入到队尾；当来源数超限时从队首逐个移出，并调用 ``_evict_origin``
+        清理其在所有短期状态映射中的数据。限制至少为一个，避免把当前来源
+        也立即淘汰掉。
+        """
         if not origin:
             return
         self.origin_lru.pop(origin, None)
@@ -121,7 +133,12 @@ class RuntimeState:
     # 便捷读写
     # ------------------------------------------------------------------ #
     def append_chat(self, origin: str, line: str, max_messages: int) -> str:
-        """追加一行历史，返回被挤出的那一行（没有则为空字符串）。"""
+        """追加一条已格式化的历史行，并将列表裁剪到指定长度。
+
+        如果新增后超过上限，会从最旧的一端持续弹出记录。返回最后一条被移除
+        的文本，方便调用方在需要时记录或检查被淘汰的历史；没有发生裁剪则
+        返回空字符串。
+        """
         chats = self.session_chats[origin]
         chats.append(line)
         removed = ""

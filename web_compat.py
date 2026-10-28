@@ -1,10 +1,11 @@
-"""请求/响应兼容层。
+"""AstrBot Web API 与旧版 Quart 请求对象的兼容层。
 
-AstrBot v4 新版插件页面使用 ``astrbot.api.web.request``，旧版本使用 Quart 的
-``request``。这里做一层最小适配，业务代码只依赖本模块，不直接接触框架对象。
+AstrBot 新版插件页面通过 ``astrbot.api.web.request`` 读取请求，较早版本则依赖
+Quart 的 ``request`` 全局对象。本模块在导入时选择可用实现，并把 query、JSON
+请求体和响应数据归一化成稳定接口，使页面 handler 无需分支判断框架版本。
 
-约定：所有页面接口统一返回 HTTP 200 + ``{"success": bool, ...}``，
-由前端根据 ``success`` 判断结果，避免不同框架对错误响应的处理差异。
+响应约定为 HTTP 200 配合 ``{"success": bool, ...}`` JSON 字段，由前端检查
+``success`` 并展示 ``error``。这避免不同框架在异常响应格式上的差异向业务层扩散。
 """
 
 from __future__ import annotations
@@ -49,7 +50,18 @@ def query_get(name: str, default: Any = None, cast: Any = None) -> Any:
 
 
 async def read_json(default: dict[str, Any] | None = None) -> dict[str, Any]:
-    """读取 JSON 请求体，解析失败时返回默认值。"""
+    """读取并规范化 JSON 请求体，确保 handler 总是收到字典。
+
+    新版 AstrBot 与 Quart 的解析方法和默认值参数不同，因此分别调用各自 API；
+    请求对象不可用、解析抛错或正文顶层不是对象时，返回调用方提供的字典默认值。
+    若默认值本身不是字典，则安全回落为空字典，避免 handler 收到不符合约定的类型。
+
+    Args:
+        default: 请求无法解析时使用的默认字典。
+
+    Returns:
+        解析得到的 JSON 对象，或规范化后的默认字典。
+    """
     fallback = default if isinstance(default, dict) else {}
     if _request is None:
         return fallback

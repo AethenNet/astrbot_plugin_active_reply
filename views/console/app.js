@@ -1,10 +1,15 @@
 /**
  * 主动回复（ActiveReply）控制台前端。
  *
- * 通过 AstrBot 插件视图 bridge 与后端通信：
+ * 页面通过 AstrBot 插件视图 bridge 与后端通信：
  *   window.AstrBotPluginView.apiGet(endpoint, params)
  *   window.AstrBotPluginView.apiPost(endpoint, body)
  * 后端统一返回 { success: true, data } 或 { success: false, error }。
+ *
+ * 交互采用“请求更新 state、render 函数重绘 DOM”的单向数据流。表单输入
+ * 先写入 state 中的编辑副本，只有点击保存后才提交后端；重新打开页面或
+ * 重新加载配置时，以后端返回值覆盖本地副本，避免把尚未保存的改动误当成
+ * 已持久化数据。各视图函数只负责当前页面区域，避免一次操作重建无关页面。
  */
 
 const UI_BUILD = 14;
@@ -138,6 +143,8 @@ function toast(message, isError = false) {
  * @throws {Error} 页面未在 AstrBot 内打开，或接口返回失败时抛出。
  */
 async function callApi(method, endpoint, payload) {
+  // bridge 不存在通常表示用户绕过 AstrBot 单独打开静态页面；此时明确失败，
+  // 不伪造空响应，避免渲染成“请求成功但没有数据”的状态。
   if (!bridge) {
     throw new Error("请在 AstrBot 面板中打开该页面");
   }
@@ -773,6 +780,8 @@ function shakeIndependent() {
 
 /** 加载指定群配置，更新当前群状态并渲染可编辑的群面板。 */
 async function openGroup(groupId) {
+  // 先记录当前选择并更新目录选中态，再取后端权威配置；编辑值与全局值
+  // 都复制成新对象，后续表单输入只改前端编辑副本，不会污染响应缓存。
   state.currentGroupId = String(groupId);
   renderGroupList();
   renderDrawerGroups();
@@ -798,12 +807,15 @@ async function saveGroup() {
   if (!data) return;
   const independent = $("independent-toggle").checked;
   if (!independent) {
+    // 跟随全局的群不保存覆盖项；通过视觉提示告诉用户先切换到独立模式。
     shakeIndependent();
     return;
   }
   const button = $("save-group");
   button.disabled = true;
   try {
+    // 仅提交群级值与名称备注，成功后重新取目录和该群配置，确保页面展示
+    // 的状态来自已持久化的数据，而不是仅沿用本地表单快照。
     await callApi("POST", `groups/${encodeURIComponent(data.group_id)}/save`, {
       independent: true,
       note: data.name || "",

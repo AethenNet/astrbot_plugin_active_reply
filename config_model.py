@@ -114,7 +114,12 @@ def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class ActiveReplyConfig:
-    """消息主动回复。"""
+    """主动发言触发策略和生效群范围。
+
+    ``mode`` 决定使用概率抽样还是模型判定；两种模式都依据
+    ``trigger_threshold`` 维护每群消息计数。名单模式为白名单时仅允许
+    ``whitelist`` 中的群，为黑名单时除 ``blacklist`` 外均允许。
+    """
 
     enable: bool = False
     mode: str = "probability"
@@ -129,7 +134,12 @@ class ActiveReplyConfig:
 
 @dataclass(frozen=True)
 class GroupContextConfig:
-    """群聊上下文增强。"""
+    """供模型参考的群聊历史及图片描述设置。
+
+    ``enable`` 控制历史采集/注入，``max_messages`` 限制每个会话保留的消息数；
+    发送者 ID 和角色标记用于帮助模型识别发言人。图片描述需要单独开启，
+    并可指定用于视觉理解的提供商与提示词。
+    """
 
     enable: bool = True
     max_messages: int = 200
@@ -142,7 +152,11 @@ class GroupContextConfig:
 
 @dataclass(frozen=True)
 class GroupReplyConfig:
-    """群聊回复增强。"""
+    """群聊互动增强的父开关及子功能开关。
+
+    ``react_pattern`` 是总开关；``role_display`` 与 ``smart_reply`` 分别控制
+    是否把成员角色及 @/引用互动规则提供给模型，单独开启子开关不会越过总开关。
+    """
 
     react_pattern: bool = False
     role_display: bool = True
@@ -151,7 +165,7 @@ class GroupReplyConfig:
 
 @dataclass(frozen=True)
 class WebSearchConfig:
-    """联网搜索。"""
+    """联网搜索工具的提供商、协议和结果展示配置。"""
 
     enable: bool = False
     provider_id: str = ""
@@ -165,7 +179,12 @@ class WebSearchConfig:
 
 @dataclass(frozen=True)
 class MemoryRagConfig:
-    """记忆 RAG。"""
+    """长期记忆检索及自动写入/抽取策略。
+
+    ``recall_k`` 限制语义召回候选数，``max_return_results`` 限制工具返回上限；
+    自动记忆由关键词快速写入和按消息窗口调用模型抽取两条路径组成。抽取配置
+    分别控制模型、消息频率、最小间隔、历史窗口、置信度门槛及群/全局作用域。
+    """
 
     enable: bool = True
     embedding_provider_id: str = ""
@@ -183,7 +202,7 @@ class MemoryRagConfig:
 
 @dataclass(frozen=True)
 class RuntimeConfig:
-    """调用配置。"""
+    """运行时内存容量及外部模型调用超时配置。"""
 
     max_origins: int = 500
     image_caption_timeout: float = 45.0
@@ -192,7 +211,13 @@ class RuntimeConfig:
 
 @dataclass(frozen=True)
 class PluginConfig:
-    """插件完整配置。"""
+    """经过规范化的插件配置快照。
+
+    各字段对应一个不可变配置区块，避免业务逻辑直接操作原始 JSON 字典。
+    ``default_factory`` 为每个配置对象分别创建缺省子配置，避免实例之间共享状态。
+    ``history_enabled``、``react_enabled`` 等属性是底层开关组合出的便捷视图，
+    不会在解析过程中额外存储第二份可变状态。
+    """
 
     active_reply: ActiveReplyConfig = field(default_factory=ActiveReplyConfig)
     group_context: GroupContextConfig = field(default_factory=GroupContextConfig)
@@ -230,7 +255,19 @@ class PluginConfig:
 # 解析
 # --------------------------------------------------------------------------- #
 def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
-    """把原始配置 dict 解析为 PluginConfig（永不抛异常）。"""
+    """将 AstrBot 原始配置映射成完整、不可变且范围受限的配置快照。
+
+    每个区块先通过 ``_section`` 确认是字典，再使用对应的类型转换函数读取
+    字段；缺失或无法识别的值回退到插件默认值，超出合法范围的数值则被钳制。
+    枚举字段会映射到支持值，名单会拆分并去重。此函数不修改传入字典，
+    因而调用方可在每次配置更新后重新解析并安全地将结果交给业务代码。
+
+    Args:
+        raw: AstrBot 加载的插件配置；``None`` 或非字典区块按默认值处理。
+
+    Returns:
+        包含所有配置区块和派生开关的 ``PluginConfig`` 实例。
+    """
     raw = raw or {}
 
     ar_raw = _section(raw, "active_reply")
