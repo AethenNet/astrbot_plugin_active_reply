@@ -30,6 +30,7 @@ QUOTE_RE = re.compile(
 )
 MENTION_CLOSE_RE = re.compile(r"</mention\s*>", re.IGNORECASE)
 QUOTE_CLOSE_RE = re.compile(r"</quote\s*>", re.IGNORECASE)
+QQ_ID_RE = re.compile(r"\d{4,12}")
 PLAIN_QQ_AT_RE = re.compile(r"@(\d{5,12})(?![0-9])")
 
 # @ 之后紧跟这些字符时不补空格（中文标点/英文标点/空白）
@@ -42,6 +43,14 @@ DEFAULT_MAX_MENTIONS = 3
 
 
 _EDGE_CHARS = " \t\r\n\"'“”‘’「」『』"
+
+# QQ 号、消息号等都是数字/字母组合；像「历史消息不引用」这种占位文字不是合法 ID
+_PLAUSIBLE_ID_RE = re.compile(r"[A-Za-z0-9_\-]{1,32}")
+
+
+def _is_plausible_id(text: str) -> bool:
+    """判断标签里的 ID 是否像一个真实 ID（排除模型编造的中文占位符）。"""
+    return bool(text) and bool(_PLAUSIBLE_ID_RE.fullmatch(text))
 
 
 def normalize_target_id(raw: str | None) -> str:
@@ -74,7 +83,8 @@ def _extract_first_quote(chain: list) -> str:
         if isinstance(comp, Plain):
             matched = QUOTE_RE.search(comp.text)
             if matched:
-                return normalize_target_id(matched.group(1))
+                candidate = normalize_target_id(matched.group(1))
+                return candidate if _is_plausible_id(candidate) else ""
     return ""
 
 
@@ -188,7 +198,7 @@ def _assemble(
 
         if kind == "at_tag":
             qq = token[1]
-            if not qq or qq == str(self_id):
+            if not qq or qq == str(self_id) or not _is_plausible_id(qq):
                 continue
             if allowed_qq is not None and qq not in allowed_qq:
                 continue
@@ -204,6 +214,7 @@ def _assemble(
             original = str(token[2])
             if (
                 budget > 0
+                and QQ_ID_RE.fullmatch(qq) is not None
                 and qq != str(self_id)
                 and (allowed_qq is None or qq in allowed_qq)
             ):
@@ -287,7 +298,10 @@ def transform_result_chain(
         components.insert(0, Reply(id=quote_id))
         converted = True
 
-    if not converted:
+    # 即使没有成功转换（标签目标非法 / 不在历史里），只要原文里出现过标签，
+    # 也要返回清理后的消息链——否则调用方会保留原始文本，标签就被当成普通
+    # 文字发出去了。
+    if not converted and not has_tag:
         return None
     return components
 
@@ -334,7 +348,7 @@ def build_interaction_instructions(
                 "想点名、提醒或回应某个具体成员时，在句子任意位置插入 "
                 '`<mention id="用户ID"/>`，它会变成真实的 @（对方会收到提醒）。',
                 f"一条回复最多 @ {max_mentions} 个人，可以出现在句首、句中、句尾。",
-                "只使用历史里出现过的用户ID；不要 @ 你自己。",
+                "只使用历史里出现过的用户ID；不要 @ 你自己，也不要编造 ID。",
                 '示例：`我先去占座<mention id="123456"/> 别迟到哦，'
                 '<mention id="234567"/> 你也是`',
             ]
@@ -346,6 +360,8 @@ def build_interaction_instructions(
             '需要针对某条具体消息回应时，把 `<quote id="消息ID"/>` 放在回复最前面。',
             '示例：`<quote id="998877"/> 这件事我同意`',
             "一条回复最多引用一条；没有必要就不要引用。",
+            "消息ID 必须是历史里 `#msg` 后面的那串数字；**不需要引用时不要输出任何 "
+            '`<quote>` 标签**，也不要写 `<quote id="..."/>` 之类的占位写法。',
             "",
             "标签必须完全按照上面的格式书写；直接写 `@昵称` 也会被尽量识别，"
             "但标签更可靠。",

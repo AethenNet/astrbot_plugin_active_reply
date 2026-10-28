@@ -8,7 +8,7 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.0.0-4b8bf5)](https://docs.astrbot.app/dev/star/plugin-new.html)
 [![Python](https://img.shields.io/badge/Python-%3E%3D3.10-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v1.0.0-12a37a)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.0.1-12a37a)](./CHANGELOG.md)
 
 </div>
 

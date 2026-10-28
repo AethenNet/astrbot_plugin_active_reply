@@ -621,6 +621,8 @@ class ActiveReplyPlugin(star.Star):
                 logger.error(f"[ActiveReply] 注入群聊上下文失败: {exc}", exc_info=True)
         # 流式回复不经过 on_decorating_result，这里给发送函数包一层处理标签
         self._patch_streaming_send(event, cfg)
+        # 最后一道兜底：发送前再清理一次残留标签（覆盖任何绕过装饰钩子的路径）
+        self._patch_send(event, cfg)
 
     def _inject_role(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         """在 system_reminder 中补上 admin/member 角色标记。"""
@@ -777,6 +779,61 @@ class ActiveReplyPlugin(star.Star):
             event.set_extra("_areply_stream_patched", True)
         except Exception as exc:
             logger.debug(f"[ActiveReply] 挂载流式处理失败: {exc}")
+
+    def _patch_send(self, event: AstrMessageEvent, cfg: PluginConfig) -> None:
+        """给 event.send 包一层：发送前再清理一次残留标签，作为最后兜底。"""
+        if getattr(event, "_areply_send_patched", False):
+            return
+        original = getattr(event, "send", None)
+        if not callable(original):
+            return
+
+        plugin = self
+
+        async def patched(message):
+            try:
+                message = plugin._transform_outgoing(event, cfg, message)
+            except Exception as exc:  # 兜底失败不能影响正常发送
+                logger.debug(f"[ActiveReply] 发送前标签清理失败: {exc}")
+                message = message
+            if message is None:  # 清理后什么都不剩，直接跳过发送
+                return None
+            return await original(message)
+
+        try:
+            event.send = patched  # type: ignore[method-assign]
+            event.set_extra("_areply_send_patched", True)
+        except Exception as exc:
+            logger.debug(f"[ActiveReply] 挂载发送前清理失败: {exc}")
+
+    def _transform_outgoing(self, event: AstrMessageEvent, cfg: PluginConfig, message):
+        """把待发送消息里的标签清理掉（找不到目标时只删标签，保留正文）。"""
+        chain = getattr(message, "chain", None)
+        if not isinstance(chain, list) or not chain:
+            return message
+        origin = event.unified_msg_origin
+        if cfg.group_context.enable:
+            registry = self.state.message_senders.get(origin, {})
+            allowed_qq: set[str] | None = set(registry.values())
+            allowed_msg_ids: set[str] | None = set(registry.keys())
+        else:
+            allowed_qq = None
+            allowed_msg_ids = None
+        transformed = transform_result_chain(
+            chain,
+            allowed_qq=allowed_qq,
+            allowed_msg_ids=allowed_msg_ids,
+            self_id=str(event.get_self_id() or ""),
+            max_mentions=MAX_MENTIONS_PER_MESSAGE,
+            name_to_qq=self.state.name_map(origin),
+        )
+        if transformed is None:
+            return message
+        if not transformed:
+            logger.debug("[ActiveReply] 消息只包含无法解析的标签，已跳过发送")
+            return None
+        message.chain = transformed
+        return message
 
     def _transform_stream_chunk(
         self, event: AstrMessageEvent, cfg: PluginConfig, chunk: Any
