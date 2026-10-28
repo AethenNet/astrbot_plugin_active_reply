@@ -13,6 +13,7 @@ class RuntimeState:
     """按会话来源隔离的运行时状态容器。"""
 
     def __init__(self) -> None:
+        """创建所有以会话来源为键的进程内状态映射。"""
         # 按 unified_msg_origin 隔离会话相关数据，避免不同群的状态相互混用。
         # 群聊历史文本（每条一行，已格式化）
         self.session_chats: dict[str, list[str]] = defaultdict(list)
@@ -46,6 +47,7 @@ class RuntimeState:
     # 来源生命周期
     # ------------------------------------------------------------------ #
     def _evict_origin(self, origin: str) -> None:
+        """从各状态容器中移除指定来源的数据，不触碰长期存储。"""
         # 清除来源关联的所有短期数据；debug_origins 的生命周期由插件管理。
         self.session_chats.pop(origin, None)
         self.message_senders.pop(origin, None)
@@ -91,11 +93,13 @@ class RuntimeState:
         bucket["calls"] += 1
 
     def log_line(self, origin: str, line: str) -> None:
+        """将非空执行日志追加到指定来源的当前轮次。"""
         # 忽略空日志，防止调试报告出现无意义的空条目。
         if line:
             self.turn_logs[origin].append(str(line))
 
     def set_debug(self, origin: str, enabled: bool) -> None:
+        """启用或关闭指定来源的回复用量调试。"""
         # 调整该来源的 token 调试状态；该集合只存在于当前进程。
         if enabled:
             self.debug_origins.add(origin)
@@ -103,10 +107,12 @@ class RuntimeState:
             self.debug_origins.discard(origin)
 
     def is_debug(self, origin: str) -> bool:
+        """判断指定来源是否开启用量调试。"""
         # 查询当前来源是否启用回复调试报告。
         return origin in self.debug_origins
 
     def cleanup_origin(self, origin: str) -> None:
+        """彻底清除来源状态及其 LRU 记录。"""
         # 完整清理来源状态并将其从 LRU 队列移除。
         self._evict_origin(origin)
         self.origin_lru.pop(origin, None)
@@ -124,6 +130,7 @@ class RuntimeState:
         return removed
 
     def remember_message(self, origin: str, msg_id: str, sender_id: str) -> None:
+        """登记消息发送者，供输出标签引用/目标校验使用。"""
         # 保存消息与发送者关联供标签校验，并限制映射最多保留 2000 条。
         if not msg_id:
             return
@@ -154,14 +161,17 @@ class RuntimeState:
         }
 
     def known_sender(self, origin: str, msg_id: str) -> str:
+        """按消息 ID 查发送者 ID；未知消息返回空字符串。"""
         # 查询消息对应的发送者；未知消息返回空字符串。
         return self.message_senders.get(origin, {}).get(str(msg_id), "")
 
     def reset_counter(self, origin: str) -> None:
+        """重置指定来源累计的主动回复消息数。"""
         # 清零当前会话的主动回复累计值。
         self.reply_counters[origin] = 0
 
     def bump_counter(self, origin: str) -> int:
+        """将来源的主动回复计数加一并返回新计数。"""
         # 累加当前会话的主动回复计数并返回更新后的值。
         self.reply_counters[origin] = self.reply_counters.get(origin, 0) + 1
         return self.reply_counters[origin]

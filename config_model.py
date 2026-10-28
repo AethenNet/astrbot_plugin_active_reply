@@ -24,6 +24,12 @@ DEFAULT_IMAGE_CAPTION_PROMPT = "Please describe the image using Chinese."
 # 基础类型转换
 # --------------------------------------------------------------------------- #
 def _to_bool(value: Any, default: bool) -> bool:
+    """将布尔值、常见字符串或数字转换为 bool。
+
+    Args:
+        value: 原始配置值。
+        default: 输入无法识别时使用的值。
+    """
     # 兼容面板、JSON 与历史配置中的布尔写法；不认识的值沿用字段默认值。
     if isinstance(value, bool):
         return value
@@ -40,6 +46,7 @@ def _to_bool(value: Any, default: bool) -> bool:
 
 
 def _to_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    """解析整数并限制在闭区间 ``[minimum, maximum]`` 内。"""
     # 将输入安全转换为整数，并统一钳制到配置项允许的闭区间。
     try:
         parsed = int(value)
@@ -54,6 +61,7 @@ def _to_float(
     minimum: float,
     maximum: float,
 ) -> float:
+    """解析有限浮点数并限制范围；无效输入返回默认值。"""
     # 过滤非法及非有限浮点数，避免 NaN/无穷值进入运行时配置。
     try:
         parsed = float(value)
@@ -65,12 +73,14 @@ def _to_float(
 
 
 def _to_str(value: Any, default: str = "") -> str:
+    """去除字符串首尾空白，并为 None 或空字符串应用默认值。"""
     # 去除字符串两侧空白；空值回落到调用方提供的默认值。
     text = str(value).strip() if value is not None else ""
     return text or default
 
 
 def _to_probability(value: Any, default: float) -> float:
+    """解析概率值，保证返回结果位于 0 到 1 之间。"""
     # 概率配置限定在 [0, 1]，复用浮点数的统一校验逻辑。
     return _to_float(value, default, 0.0, 1.0)
 
@@ -93,6 +103,7 @@ def _parse_str_list(value: Any) -> tuple[str, ...]:
 
 
 def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
+    """读取配置区块；字段缺失或不是字典时返回空字典。"""
     # 配置区块必须为字典，其他类型视为缺省区块以便后续读取安全。
     value = raw.get(key)
     return value if isinstance(value, dict) else {}
@@ -193,6 +204,7 @@ class PluginConfig:
     # ---- 派生属性 ------------------------------------------------------- #
     @property
     def history_enabled(self) -> bool:
+        """返回群聊历史记录与注入功能的总开关状态。"""
         # 兼容调用方使用 history_enabled 命名访问上下文增强总开关。
         return self.group_context.enable
 
@@ -203,11 +215,13 @@ class PluginConfig:
 
     @property
     def smart_reply_enabled(self) -> bool:
+        """返回 React Pattern 与智能回复子开关同时开启的状态。"""
         # React Pattern 是父级开关；子级智能回复开关不能单独越过它生效。
         return self.react_enabled and self.group_reply.smart_reply
 
     @property
     def role_display_enabled(self) -> bool:
+        """返回 React Pattern 与用户角色显示子开关同时开启的状态。"""
         # 角色提示同样受 React Pattern 总开关约束。
         return self.react_enabled and self.group_reply.role_display
 
@@ -405,6 +419,12 @@ def deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any
 
 
 def get_by_path(data: dict[str, Any], path: str) -> Any:
+    """沿点分隔路径读取嵌套字典；路径不存在时返回 None。
+
+    Args:
+        data: 根配置字典。
+        path: 例如 ``active_reply.enable``。
+    """
     # 按点分隔的路径读取嵌套配置；路径任一层不存在时返回 None。
     current: Any = data
     for key in path.split("."):
@@ -415,6 +435,7 @@ def get_by_path(data: dict[str, Any], path: str) -> Any:
 
 
 def set_by_path(data: dict[str, Any], path: str, value: Any) -> None:
+    """按点分隔路径创建中间字典并写入配置值。"""
     # 按点分隔路径逐层创建字典节点，再写入字段值。
     keys = path.split(".")
     current = data
@@ -448,6 +469,7 @@ def coerce_group_value(spec: GroupFieldSpec, value: Any) -> Any:
 
 
 def _field_default(spec: GroupFieldSpec) -> Any:
+    """根据群级字段定义返回该项的插件默认值。"""
     # 群级覆盖表单使用独立默认值，避免依赖未加载的全局配置实例。
     defaults: dict[str, Any] = {
         "active_reply.enable": False,

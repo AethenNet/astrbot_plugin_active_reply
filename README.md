@@ -16,8 +16,8 @@
 
 ## 导航
 
-[重要设置](#使用前建议检查) · [功能概览](#这是什么) · [快速开始](#快速开始) ·
-[指令与工具](#指令) · [插件页面](#插件页面) · [项目结构](#项目结构)
+[使用前检查](#使用前建议检查) · [功能概览](#主要功能) · [快速开始](#快速开始) ·
+[指令与工具](#指令) · [插件页面](#插件页面) · [开发文档](#文档) · [项目结构](#项目结构)
 
 ## ⚠️ 使用前建议检查
 
@@ -109,7 +109,7 @@ https://github.com/AethenNet/astrbot_plugin_active_reply/releases/latest/downloa
 
 ## 文档
 
-- 📘 **详细说明：[插件说明.md](./插件说明.md)** —— 运行逻辑、每次回复的判定过程、标签语法、配置项含义、常见问题。
+- 📘 **开发文档：[开发文档.md](./开发文档.md)** —— 插件运行流程、功能实现、配置说明、数据存储与维护指南。
 - 📝 **更新日志：[CHANGELOG.md](./CHANGELOG.md)**
 
 ## 项目结构
@@ -127,19 +127,13 @@ https://github.com/AethenNet/astrbot_plugin_active_reply/releases/latest/downloa
 | `views/console/` | 插件控制台的 HTML、CSS、JavaScript 与图标资源 |
 | `metadata.yaml` | AstrBot 插件元数据与版本信息 |
 
-运行流程、存储边界、配置项和接口清单见[详细说明](./插件说明.md)。
+运行流程、存储边界、配置项和接口清单见[开发文档](./开发文档.md)。
 
 ## 致谢
 
 - 界面图标来自 [Morphicons](https://github.com/guillermolg00/morphicons) 的 Lucide 图标集（MIT / Lucide ISC），菜单按钮使用 Morphicons 引擎做形变动画；
-- 功能设计参考了 [`astrbot_plugin_astrbot_enhance_mode`](https://github.com/Axi404/astrbot_plugin_astrbot_enhance_mode)。
+- 功能设计与交互形态参考了社区插件 [`astrbot_plugin_astrbot_enhance_mode`](https://github.com/Axi404/astrbot_plugin_astrbot_enhance_mode)，并在此基础上重新组织配置结构与页面，补充按群独立配置和 @ 目标校验。感谢原作者的开源工作。
 
 ## 许可证
 
 本项目使用 [MIT License](./LICENSE)。
-
-## 灵感来源
-
-本插件的功能设计与交互形态参考了社区插件
-[`astrbot_plugin_astrbot_enhance_mode`](https://github.com/Axi404/astrbot_plugin_astrbot_enhance_mode)
-（React 群聊上下文、主动回复、标签解析），在此基础上重新组织了配置结构与页面，并补充了按群独立配置、@ 目标校验等实现。感谢原作者的开源工作。

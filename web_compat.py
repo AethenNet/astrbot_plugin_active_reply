@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - 兼容旧版本
 
 
 def _query_source() -> Any:
+    """获取当前请求的查询参数映射，兼容 AstrBot 与 Quart 的属性名。"""
     # 新版请求对象使用 query，旧版 Quart 使用 args；均不可用时返回空映射。
     if _request is None:
         return {}
@@ -67,6 +68,7 @@ async def read_json(default: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def ok(data: Any = None, **extra: Any) -> dict[str, Any]:
+    """构造页面接口的成功响应，可附带 data 和额外顶层字段。"""
     # 页面接口统一用 success 字段传递成功状态，便于前端跨版本处理。
     payload: dict[str, Any] = {"success": True}
     if data is not None:
@@ -76,5 +78,6 @@ def ok(data: Any = None, **extra: Any) -> dict[str, Any]:
 
 
 def fail(message: str) -> dict[str, Any]:
+    """构造供前端识别并显示的统一失败响应。"""
     # 错误也采用稳定 JSON 结构，由页面统一显示 error 文本。
     return {"success": False, "error": str(message)}
