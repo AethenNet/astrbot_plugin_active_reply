@@ -54,7 +54,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.utils.io import download_image_by_url
 from mcp import types as mcp_types
 
-from config_model import (
+from .config_model import (
     DEFAULT_IMAGE_CAPTION_PROMPT,
     PluginConfig,
     active_reply_allowed,
