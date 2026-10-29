@@ -25,7 +25,7 @@ from .config_model import (
     build_schema_patch,
     deep_merge,
 )
-from web_compat import fail, ok, query_get, read_json
+from .web_compat import fail, ok, query_get, read_json
 
 
 class PageApi:

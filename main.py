@@ -62,11 +62,11 @@ from .config_model import (
     deep_merge,
     parse_plugin_config,
 )
-from group_store import GroupStore
-from memory_store import MemoryStore
-from page_api import PageApi
-from runtime_state import RuntimeState
-from tags import (
+from .group_store import GroupStore
+from .memory_store import MemoryStore
+from .page_api import PageApi
+from .runtime_state import RuntimeState
+from .tags import (
     bounded_chat_history,
     build_interaction_instructions,
     clean_text_for_history,
@@ -2569,16 +2569,15 @@ class ActiveReplyPlugin(star.Star):
         """写入一条可检索的长期记忆。
 
         Args:
-            event: 当前消息事件；未提供角色 ID 时用于取得当前发送者和默认群范围。
-            content: 必填记忆正文，保存前会去除首尾空白并生成 embedding。
-            related_role_ids: 可选角色 ID，接受 JSON 数组或逗号分隔文本；为空时
+            content(string): 必填记忆正文，保存前会去除首尾空白并生成 embedding。
+            related_role_ids(string): 可选角色 ID，接受 JSON 数组或逗号分隔文本；为空时
                 默认关联当前发送者。角色 ID 用于之后按成员筛选记忆。
-            memory_time: 可选 Unix 秒/毫秒时间戳或 ISO 时间；省略时使用当前时间。
-            group_scope: 可选完整范围，例如 ``aiocqhttp:123456``；显式设置时优先于
+            memory_time(string): 可选 Unix 秒/毫秒时间戳或 ISO 时间；省略时使用当前时间。
+            group_scope(string): 可选完整范围，例如 ``aiocqhttp:123456``；显式设置时优先于
                 从事件推导的群范围。
-            group_id: 可选群号，通常与 ``group_scope`` 一起用于精确过滤。
-            platform_id: 可选平台 ID，用于区分不同平台上相同的群号。
-            extra_metadata_json: 可选额外元数据 JSON；合法对象按对象保存，其他
+            group_id(string): 可选群号，通常与 ``group_scope`` 一起用于精确过滤。
+            platform_id(string): 可选平台 ID，用于区分不同平台上相同的群号。
+            extra_metadata_json(string): 可选额外元数据 JSON；合法对象按对象保存，其他
                 JSON 值或无效 JSON 会作为 ``raw`` 字段保留。
 
         Returns:
@@ -2685,20 +2684,19 @@ class ActiveReplyPlugin(star.Star):
         查询无结果、未显式请求跨群且记忆配置允许全局记忆时，才追加全局回退。
 
         Args:
-            event: 当前消息事件，用于推导缺省的平台和群作用域。
-            query: 可选语义检索文本；空字符串表示仅按筛选条件和时间检索。
-            related_role_ids: 可选角色 ID，接受 JSON 数组或逗号分隔文本。
-            role_match_mode: 多个角色的匹配方式；``any`` 命中任一角色，``all`` 要求全部命中。
-            start_time: 可选时间下界，支持 Unix 时间戳或 ISO 时间。
-            end_time: 可选时间上界，支持 Unix 时间戳或 ISO 时间。
-            group_scope: 可选完整群作用域；为空时结合事件与群号生成。
-            group_id: 可选群号过滤条件。
-            platform_id: 可选平台过滤条件。
-            sort_by: ``relevance`` 按相似度排序；``time`` 按记忆时间排序。
-            sort_order: ``desc`` 倒序，``asc`` 正序。
-            max_results: 最多返回记录数；非正值使用配置上限。
-            embedding_recall_k: 语义候选截断数；非正值使用插件配置。
-            ignore_group_id: 为真时不自动限制为当前群，可用于跨群检索。
+            query(string): 可选语义检索文本；空字符串表示仅按筛选条件和时间检索。
+            related_role_ids(string): 可选角色 ID，接受 JSON 数组或逗号分隔文本。
+            role_match_mode(string): 多个角色的匹配方式；``any`` 命中任一角色，``all`` 要求全部命中。
+            start_time(string): 可选时间下界，支持 Unix 时间戳或 ISO 时间。
+            end_time(string): 可选时间上界，支持 Unix 时间戳或 ISO 时间。
+            group_scope(string): 可选完整群作用域；为空时结合事件与群号生成。
+            group_id(string): 可选群号过滤条件。
+            platform_id(string): 可选平台过滤条件。
+            sort_by(string): ``relevance`` 按相似度排序；``time`` 按记忆时间排序。
+            sort_order(string): ``desc`` 倒序，``asc`` 正序。
+            max_results(number): 最多返回记录数；非正值使用配置上限。
+            embedding_recall_k(number): 语义候选截断数；非正值使用插件配置。
+            ignore_group_id(bool): 为真时不自动限制为当前群，可用于跨群检索。
 
         Returns:
             包含筛选条件、命中数量和记忆记录的 JSON 字符串；参数无效或服务
