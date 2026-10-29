@@ -1,7 +1,10 @@
-"""插件页面（视图）后端接口。
+"""插件控制台页面的后端接口与数据整形层。
 
-所有 handler 都返回 ``{"success": ..., "data": ...}`` 形式的 JSON，
-由 ``views/console`` 下的前端通过 ``window.AstrBotPluginView`` bridge 调用。
+各 handler 通过 ``web_compat`` 读取请求并返回统一 JSON，不直接操作 HTTP
+响应对象。全局设置依据 ``_conf_schema.json`` 过滤并转换提交字段；群设置只允许
+配置模型声明的覆盖字段；记忆管理接口则将 SQLite 存储结果加工成控制台需要的
+分页、统计、自检和清理数据。前端由 ``views/console`` 下的脚本通过 AstrBot
+插件视图 bridge 调用这些处理器。
 """
 
 from __future__ import annotations
@@ -26,9 +29,16 @@ from .web_compat import fail, ok, query_get, read_json
 
 
 class PageApi:
-    """页面后端处理器集合。"""
+    """将控制台路由操作映射到插件配置、存储和运行状态的适配器。
+
+    实例不拥有独立业务状态，而是引用插件对象并委托给其配置模型、群配置仓库、
+    记忆存储和运行态。响应使用 ``ok``/``fail`` 统一包装，避免每个端点自行
+    决定错误结构或重复实现配置校验。
+    """
 
     def __init__(self, plugin: Any) -> None:
+        """保存插件实例，以便各页面处理器访问配置、存储和运行状态。"""
+        # 保留插件实例，以共享配置、存储、提供商列表与运行时状态。
         self.plugin = plugin
 
     @staticmethod
@@ -66,9 +76,13 @@ class PageApi:
     # 全局配置
     # ------------------------------------------------------------------ #
     def _schema_path(self) -> Path:
+        """返回插件目录中的 JSON 配置 schema 文件路径。"""
+        # schema 与插件源码同目录，避免依赖 AstrBot 当前工作目录。
         return Path(__file__).with_name("_conf_schema.json")
 
     def _load_schema(self) -> dict[str, Any]:
+        """读取页面表单 schema；失败时记录错误并返回空对象。"""
+        # 读取全局配置表单定义；失败时记录日志并返回空 schema。
         try:
             return json.loads(self._schema_path().read_text(encoding="utf-8"))
         except Exception as exc:
@@ -135,6 +149,8 @@ class PageApi:
     # 概览
     # ------------------------------------------------------------------ #
     async def overview(self) -> dict[str, Any]:
+        """汇总插件版本、群组、记忆统计、提供商和功能开关。"""
+        # 汇总版本、群、记忆、Embedding 和全局开关供状态页一次渲染。
         plugin = self.plugin
         cfg = plugin._global_cfg()
         force = bool(query_get("force", 0, int))
@@ -185,6 +201,8 @@ class PageApi:
     # 群配置
     # ------------------------------------------------------------------ #
     async def list_groups(self) -> dict[str, Any]:
+        """获取已知群列表，并按查询参数决定是否强制刷新缓存。"""
+        # 查询平台、运行时和本地配置中已知的群，并支持强制刷新缓存。
         force = bool(query_get("force", 0, int))
         try:
             groups = await self.plugin.collect_groups(force=force)
@@ -214,6 +232,8 @@ class PageApi:
         return str((leaf or {}).get("hint") or "")
 
     async def get_group(self, group_id: str) -> dict[str, Any]:
+        """返回指定群的有效配置、全局值、字段说明和展示名称。"""
+        # 返回群级有效值、全局快照、字段元数据和展示名称。
         group_id = str(group_id or "").strip()
         if not group_id:
             return fail("group_id 不能为空")
@@ -266,6 +286,8 @@ class PageApi:
         )
 
     async def save_group(self, group_id: str) -> dict[str, Any]:
+        """校验并保存群级覆盖，或切换为跟随全局配置。"""
+        # 校验并保存群级允许覆盖项，或将该群设置为跟随全局配置。
         group_id = str(group_id or "").strip()
         if not group_id:
             return fail("group_id 不能为空")
@@ -298,6 +320,8 @@ class PageApi:
         return ok({"group_id": group_id, "independent": independent, "saved": saved})
 
     async def reset_group(self, group_id: str) -> dict[str, Any]:
+        """删除指定群的本地覆盖配置，使其恢复继承全局设置。"""
+        # 删除该群持久化覆盖项，使其恢复跟随全局设置。
         group_id = str(group_id or "").strip()
         if not group_id:
             return fail("group_id 不能为空")
@@ -309,6 +333,8 @@ class PageApi:
     # 记忆 RAG
     # ------------------------------------------------------------------ #
     async def rag_stats(self) -> dict[str, Any]:
+        """返回记忆库统计信息及已存在的记忆作用域列表。"""
+        # 获取记忆库统计信息及已存在作用域列表。
         store = self.plugin.memory_store
         if store is None:
             return fail("记忆库未初始化")
@@ -321,6 +347,8 @@ class PageApi:
         return ok({"stats": stats, "group_scopes": scopes})
 
     async def rag_list(self) -> dict[str, Any]:
+        """按 URL 查询条件分页列出记忆，并补充记忆来源字段。"""
+        # 从 URL 查询参数读取筛选和分页条件，补充来源标签后返回记忆行。
         store = self.plugin.memory_store
         if store is None:
             return fail("记忆库未初始化")
@@ -349,6 +377,8 @@ class PageApi:
     # 自动记忆
     # ------------------------------------------------------------------ #
     def _auto_memory_state(self) -> dict[str, Any]:
+        """汇总自动抽取配置、记忆来源统计及当日新增数量。"""
+        # 聚合自动抽取参数、记忆来源计数和当日新增量。
         cfg = self.plugin._global_cfg()
         store = self.plugin.memory_store
         stats = store.get_stats() if store else {}
@@ -381,9 +411,13 @@ class PageApi:
         }
 
     async def memory_auto(self) -> dict[str, Any]:
+        """返回自动记忆面板所需的只读状态。"""
+        # 自动记忆面板的只读状态接口。
         return ok(self._auto_memory_state())
 
     async def memory_auto_toggle(self) -> dict[str, Any]:
+        """只更新自动抽取开关，保存配置并使运行时解析缓存失效。"""
+        # 只切换自动抽取开关，保留其余插件配置并立即失效化解析缓存。
         payload = await read_json()
         if "enable" not in payload:
             return fail("缺少 enable 参数")
@@ -405,6 +439,8 @@ class PageApi:
         return ok(self._auto_memory_state())
 
     async def rag_detail(self, memory_id: str) -> dict[str, Any]:
+        """按记忆 ID 返回完整记录；记录不存在时返回统一失败响应。"""
+        # 按 ID 返回完整记忆对象供详情抽屉显示。
         store = self.plugin.memory_store
         if store is None:
             return fail("记忆库未初始化")
@@ -414,6 +450,8 @@ class PageApi:
         return ok(item)
 
     async def rag_delete(self, memory_id: str) -> dict[str, Any]:
+        """删除指定记忆，并记录页面操作日志。"""
+        # 删除指定记忆并记录页面操作日志。
         store = self.plugin.memory_store
         if store is None:
             return fail("记忆库未初始化")
@@ -424,6 +462,8 @@ class PageApi:
         return ok({"memory_id": memory_id, "deleted": True})
 
     async def rag_cleanup(self) -> dict[str, Any]:
+        """在线程池执行旧格式记忆数据清理，避免阻塞事件循环。"""
+        # 在线程池执行旧数据规范化，避免同步 SQLite 操作阻塞事件循环。
         store = self.plugin.memory_store
         if store is None:
             return fail("记忆库未初始化")
@@ -440,6 +480,8 @@ class PageApi:
         steps: list[dict[str, Any]] = []
 
         def add(name: str, passed: bool, detail: str = "") -> None:
+            """将单项自检结果追加到统一结构的步骤列表。"""
+            # 使用同一结构累计每个自检步骤，便于前端逐项显示失败原因。
             steps.append({"name": name, "ok": bool(passed), "detail": str(detail)})
 
         store = plugin.memory_store
@@ -514,6 +556,8 @@ class PageApi:
     # 工具
     # ------------------------------------------------------------------ #
     def _provider_options(self) -> list[dict[str, str]]:
+        """生成按提供商 ID 排序的文本模型选择项。"""
+        # 生成配置页面可用的文本模型提供商下拉选项并按 ID 排序。
         options: list[dict[str, str]] = []
         try:
             providers = self.plugin.context.get_all_providers() or []

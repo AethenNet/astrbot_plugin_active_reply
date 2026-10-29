@@ -79,6 +79,8 @@ def normalize_target_id(raw: str | None) -> str:
 # 内部工具
 # --------------------------------------------------------------------------- #
 def _extract_first_quote(chain: list) -> str:
+    """提取消息链中首个引用标签的规范化 ID；没有有效标签时返回空串。"""
+    # 引用仅从纯文本段中提取，且只采用回复消息链里首次出现的合法标签。
     for comp in chain:
         if isinstance(comp, Plain):
             matched = QUOTE_RE.search(comp.text)
@@ -89,11 +91,15 @@ def _extract_first_quote(chain: list) -> str:
 
 
 def _strip_close_tags(text: str) -> str:
+    """删除 mention/quote 的闭合标签，保留其余文本内容。"""
+    # 清理不参与组件转换的闭合标签，避免它们作为普通文本发送。
     text = QUOTE_CLOSE_RE.sub("", text)
     return MENTION_CLOSE_RE.sub("", text)
 
 
 def _build_name_regex(name_to_qq: dict[str, str] | None) -> re.Pattern[str] | None:
+    """按昵称长度降序构建匹配式，无法匹配时返回 None。"""
+    # 长昵称优先匹配，避免短昵称先命中更长昵称的前缀。
     if not name_to_qq:
         return None
     names = sorted(

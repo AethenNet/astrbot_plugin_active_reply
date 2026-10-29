@@ -1,10 +1,15 @@
 /**
  * 主动回复（ActiveReply）控制台前端。
  *
- * 通过 AstrBot 插件视图 bridge 与后端通信：
+ * 页面通过 AstrBot 插件视图 bridge 与后端通信：
  *   window.AstrBotPluginView.apiGet(endpoint, params)
  *   window.AstrBotPluginView.apiPost(endpoint, body)
  * 后端统一返回 { success: true, data } 或 { success: false, error }。
+ *
+ * 交互采用“请求更新 state、render 函数重绘 DOM”的单向数据流。表单输入
+ * 先写入 state 中的编辑副本，只有点击保存后才提交后端；重新打开页面或
+ * 重新加载配置时，以后端返回值覆盖本地副本，避免把尚未保存的改动误当成
+ * 已持久化数据。各视图函数只负责当前页面区域，避免一次操作重建无关页面。
  */
 
 const UI_BUILD = 14;
@@ -12,6 +17,10 @@ console.info(`[ActiveReply] UI build ${UI_BUILD}`);
 
 const bridge = window.AstrBotPluginView || window.AstrBotPluginPage || null;
 
+/**
+ * 页面唯一的前端状态源：视图数据、编辑中的配置值与记忆列表筛选条件均保存在此处。
+ * 读取接口后先更新 state，再由 render 函数将其映射到 DOM。
+ */
 const state = {
   view: "overview",
   overview: null,
@@ -52,6 +61,7 @@ const SECTION_ICONS = {
   runtime: "sliders",
 };
 
+/** 按图标名生成引用 SVG sprite 的标记。 */
 function icon(name) {
   return `<svg class="icon" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 }
@@ -70,11 +80,17 @@ const FIELD_GROUPS = [
   },
 ];
 
+/** 通过元素 ID 获取控制台节点，减少重复的 DOM 查询写法。 */
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ */
 /* 基础工具                                                            */
 /* ------------------------------------------------------------------ */
+/**
+ * 对不可信文本执行 HTML 转义，供模板字符串插入标记前使用。
+ * @param {*} value 任意待展示值。
+ * @returns {string} 转义后的文本。
+ */
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -112,6 +128,7 @@ function askConfirm(message) {
   });
 }
 
+/** 显示短暂的成功或错误提示，并重置之前启动的隐藏计时器。 */
 function toast(message, isError = false) {
   const node = $("toast");
   node.textContent = message;
@@ -121,7 +138,13 @@ function toast(message, isError = false) {
   toastTimer = setTimeout(() => node.classList.remove("show"), 2400);
 }
 
+/**
+ * 经 AstrBot 插件视图 bridge 调用接口，并统一处理 success/error 包装。
+ * @throws {Error} 页面未在 AstrBot 内打开，或接口返回失败时抛出。
+ */
 async function callApi(method, endpoint, payload) {
+  // bridge 不存在通常表示用户绕过 AstrBot 单独打开静态页面；此时明确失败，
+  // 不伪造空响应，避免渲染成“请求成功但没有数据”的状态。
   if (!bridge) {
     throw new Error("请在 AstrBot 面板中打开该页面");
   }
@@ -138,19 +161,23 @@ async function callApi(method, endpoint, payload) {
   return response;
 }
 
+/** 将计数格式化为当前语言环境的千位分隔数字。 */
 function formatNumber(value) {
   return Number(value || 0).toLocaleString("zh-CN");
 }
 
+/** 清除配置提示末尾多余的中文/英文句号，统一表单文案样式。 */
 function cleanHint(text) {
   return String(text || "").trim().replace(/[。.]+$/, "");
 }
 
+/** 将长文本压成单行摘要，超长部分用省略号标识。 */
 function clip(text, max = 110) {
   const source = String(text || "").replace(/\s+/g, " ").trim();
   return source.length > max ? `${source.slice(0, max)}…` : source;
 }
 
+/** 按点分隔路径读取 schema 对应的嵌套配置值。 */
 function getPath(obj, path) {
   let current = obj;
   for (const key of String(path).split(".")) {
@@ -160,6 +187,7 @@ function getPath(obj, path) {
   return current;
 }
 
+/** 按点分隔路径创建缺失的对象节点并写入表单字段值。 */
 function setPath(obj, path, value) {
   const keys = String(path).split(".");
   let current = obj;
@@ -172,10 +200,12 @@ function setPath(obj, path, value) {
   current[keys[keys.length - 1]] = value;
 }
 
+/** 构造 QQ 群头像地址；调用处负责在加载失败时设置占位图。 */
 function avatarUrl(groupId) {
   return `https://p.qlogo.cn/gh/${encodeURIComponent(groupId)}/${encodeURIComponent(groupId)}/100`;
 }
 
+/** 生成无需远程请求的 SVG 首字占位头像。 */
 function fallbackAvatar(name) {
   const letter = String(name || "#").slice(0, 1) || "#";
   const svg =
@@ -189,6 +219,7 @@ function fallbackAvatar(name) {
 /* ------------------------------------------------------------------ */
 /* 主题                                                                */
 /* ------------------------------------------------------------------ */
+/** 将 AstrBot 面板提供的主题状态映射到 body 属性与状态徽标。 */
 function applyTheme(isDark) {
   document.body.dataset.theme = isDark ? "dark" : "light";
   $("theme-chip").textContent = isDark ? "深色" : "浅色";
@@ -197,6 +228,7 @@ function applyTheme(isDark) {
 /* ------------------------------------------------------------------ */
 /* 抽屉与视图切换                                                      */
 /* ------------------------------------------------------------------ */
+/** 切换主视图与导航选中态，并按页面类型触发对应数据加载。 */
 function switchView(name) {
   state.view = name;
   document.querySelectorAll(".view").forEach((node) => {
@@ -223,6 +255,7 @@ let menuMorph = null;
 const MENU_PATH_D = "M4 5h16M4 12h16M4 19h16";
 const CLOSE_PATH_D = "M18 6L6 18M6 6l12 12";
 
+/** 延迟载入 Morphicons 菜单形变动画；依赖失败时保留静态图标能力。 */
 async function initMorphIcons() {
   try {
     const { createMorph } = await import("./vendor/morphicons/dom.js");
@@ -235,6 +268,7 @@ async function initMorphIcons() {
   }
 }
 
+/** 将汉堡菜单图标切换为关闭图标，动画不可用时直接更新 SVG path。 */
 function setMenuMorph(open) {
   const next = open ? CLOSE_PATH_D : MENU_PATH_D;
   if (menuMorph) {
@@ -249,6 +283,7 @@ function setMenuMorph(open) {
   if (path) path.setAttribute("d", next);
 }
 
+/** 展开侧边栏并同步遮罩、无障碍状态和菜单图标。 */
 function openDrawer() {
   $("drawer").classList.add("open");
   $("drawer").setAttribute("aria-hidden", "false");
@@ -257,6 +292,7 @@ function openDrawer() {
   setMenuMorph(true);
 }
 
+/** 关闭侧边栏并恢复遮罩、按钮无障碍状态与菜单图标。 */
 function closeDrawer() {
   $("drawer").classList.remove("open");
   $("drawer").setAttribute("aria-hidden", "true");
@@ -268,6 +304,7 @@ function closeDrawer() {
 /* ------------------------------------------------------------------ */
 /* 状态（概览）                                                        */
 /* ------------------------------------------------------------------ */
+/** 组合 Embedding 模型名和 provider ID，供状态区及提示文字显示。 */
 function embeddingLabel(item) {
   const model = String(item.model || "").trim();
   const id = String(item.id || "").trim();
@@ -275,6 +312,7 @@ function embeddingLabel(item) {
   return model || id || "";
 }
 
+/** 将 Embedding 可用状态转换为记忆 RAG 状态卡的简短说明。 */
 function ragEmbeddingHint(embedding) {
   if (!embedding || !embedding.available) return "未配置 Embedding 提供商";
   const providers = embedding.providers || [];
@@ -283,6 +321,7 @@ function ragEmbeddingHint(embedding) {
   return `Embedding：${first ? embeddingLabel(first) : "—"}`;
 }
 
+/** 在全局配置的 Embedding 控件下列出已发现的 provider 和模型名。 */
 function decorateEmbeddingHint() {
   if (!state.embeddingProviders.length) return;
   const control = document.querySelector(
@@ -299,6 +338,7 @@ function decorateEmbeddingHint() {
   control.appendChild(hint);
 }
 
+/** 生成一张统一样式的状态卡 HTML，调用方传入已确定的展示内容。 */
 function statusCard(label, value, hint, tone = "") {
   return `
     <div class="status-card">
@@ -308,6 +348,7 @@ function statusCard(label, value, hint, tone = "") {
     </div>`;
 }
 
+/** 获取插件概览数据并刷新状态页与侧边栏群列表。 */
 async function loadOverview(force = false) {
   try {
     const data = await callApi("GET", "overview", force ? { force: 1 } : {});
@@ -323,6 +364,7 @@ async function loadOverview(force = false) {
   }
 }
 
+/** 根据概览响应渲染状态卡、全局开关、记忆统计和最近活跃群。 */
 function renderOverview(data) {
   const s = data.switches || {};
   const stats = data.stats || {};
@@ -423,10 +465,12 @@ function renderOverview(data) {
 /* ------------------------------------------------------------------ */
 /* 群配置                                                              */
 /* ------------------------------------------------------------------ */
+/** 返回群列表中优先展示的群名，没有可用名称时退回“未命名群”。 */
 function groupDisplayName(item) {
   return item && item.name ? item.name : "未命名群";
 }
 
+/** 绑定远程 QQ 群头像和一次性错误回退，避免破图图标留在列表中。 */
 function bindAvatar(img, groupId, name) {
   img.src = avatarUrl(groupId);
   img.onerror = () => {
@@ -435,6 +479,7 @@ function bindAvatar(img, groupId, name) {
   };
 }
 
+/** 渲染抽屉内的快捷群列表，并绑定头像回退和打开群配置事件。 */
 function renderDrawerGroups() {
   const container = $("drawer-groups");
   if (!container) return;
@@ -468,6 +513,7 @@ function renderDrawerGroups() {
   });
 }
 
+/** 按搜索词过滤群列表、渲染条目并绑定群配置打开事件。 */
 function renderGroupList() {
   const keyword = state.groupSearch.trim().toLowerCase();
   const groups = state.groups.filter((item) => {
@@ -512,6 +558,7 @@ function renderGroupList() {
   renderDrawerGroups();
 }
 
+/** 获取群目录；已有缓存时直接重绘，force 用于请求后端强制刷新。 */
 async function loadGroups(force = false) {
   if (state.groups.length && !force) {
     renderGroupList();
@@ -527,6 +574,7 @@ async function loadGroups(force = false) {
   }
 }
 
+/** 按回复模式决定群级表单的条件字段是否可见。 */
 function fieldVisible(field, values) {
   if (field.path === "active_reply.possibility") {
     return values["active_reply.mode"] === "probability";
@@ -540,6 +588,7 @@ function fieldVisible(field, values) {
   return true;
 }
 
+/** 生成 provider 下拉选项，同时保留当前配置中已不可用的旧 ID。 */
 function providerOptions(selected) {
   const options = [
     `<option value="">跟随会话默认</option>`,
@@ -558,6 +607,7 @@ function providerOptions(selected) {
   return options.join("");
 }
 
+/** 按群覆盖字段元数据生成开关、选项、滑块或文本控件。 */
 function buildControl(field, value) {
   const path = field.path;
   if (field.kind === "bool") {
@@ -596,6 +646,7 @@ function buildControl(field, value) {
   return `<input type="text" data-path="${path}" data-kind="str" value="${escapeHtml(value || "")}" />`;
 }
 
+/** 组合当前群的三组配置表单，并重新绑定控件与 Tab 事件。 */
 function renderGroupPanel() {
   const data = state.currentGroup;
   if (!data) return;
@@ -643,6 +694,7 @@ function renderGroupPanel() {
   ensureTabVisible("group-tabs");
 }
 
+/** 在下一帧将当前活动 Tab 滚入其横向滚动容器的可视范围。 */
 function ensureTabVisible(containerId) {
   requestAnimationFrame(() => {
     const el = document.querySelector(`#${containerId} .tab.active`);
@@ -652,11 +704,13 @@ function ensureTabVisible(containerId) {
   });
 }
 
+/** 平滑滚动横向 Tab，使刚切换的分区落在容器中央。 */
 function centerTab(tab) {
   if (!tab || typeof tab.scrollIntoView !== "function") return;
   tab.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
 }
 
+/** 通过移除并重加 CSS 类重新播放分区切换过渡动画。 */
 function playTabSwitch(el) {
   if (!el) return;
   el.classList.remove("tab-switch");
@@ -664,6 +718,7 @@ function playTabSwitch(el) {
   el.classList.add("tab-switch");
 }
 
+/** 更新群级配置 Tab 与对应内容面板的活动状态。 */
 function switchTab(name) {
   state.currentTab = name;
   document.querySelectorAll("#group-tabs .tab").forEach((tab) => {
@@ -674,6 +729,7 @@ function switchTab(name) {
   });
 }
 
+/** 将群级表单控件的修改同步回 state.currentGroup.values。 */
 function bindFormEvents() {
   const form = $("group-form");
   form.querySelectorAll("[data-path]").forEach((input) => {
@@ -700,6 +756,7 @@ function bindFormEvents() {
   });
 }
 
+/** 按当前群级配置值重新显示或隐藏与模式相关的字段行。 */
 function refreshConditionalRows() {
   const data = state.currentGroup;
   if (!data) return;
@@ -711,6 +768,7 @@ function refreshConditionalRows() {
   });
 }
 
+/** 提示用户先开启群独立配置，不在跟随全局状态下执行写入操作。 */
 function shakeIndependent() {
   const wrap = $("independent-wrap");
   wrap.classList.remove("shake");
@@ -720,7 +778,10 @@ function shakeIndependent() {
   toast("请先打开「独立配置」，再保存或恢复", true);
 }
 
+/** 加载指定群配置，更新当前群状态并渲染可编辑的群面板。 */
 async function openGroup(groupId) {
+  // 先记录当前选择并更新目录选中态，再取后端权威配置；编辑值与全局值
+  // 都复制成新对象，后续表单输入只改前端编辑副本，不会污染响应缓存。
   state.currentGroupId = String(groupId);
   renderGroupList();
   renderDrawerGroups();
@@ -740,17 +801,21 @@ async function openGroup(groupId) {
   }
 }
 
+/** 校验本群处于独立模式后提交覆盖值，并刷新列表与面板状态。 */
 async function saveGroup() {
   const data = state.currentGroup;
   if (!data) return;
   const independent = $("independent-toggle").checked;
   if (!independent) {
+    // 跟随全局的群不保存覆盖项；通过视觉提示告诉用户先切换到独立模式。
     shakeIndependent();
     return;
   }
   const button = $("save-group");
   button.disabled = true;
   try {
+    // 仅提交群级值与名称备注，成功后重新取目录和该群配置，确保页面展示
+    // 的状态来自已持久化的数据，而不是仅沿用本地表单快照。
     await callApi("POST", `groups/${encodeURIComponent(data.group_id)}/save`, {
       independent: true,
       note: data.name || "",
@@ -766,6 +831,7 @@ async function saveGroup() {
   }
 }
 
+/** 将当前群表单重置为 schema 默认值；更改仅在用户保存后写入。 */
 function resetGroup() {
   const data = state.currentGroup;
   if (!data) return;
@@ -780,6 +846,7 @@ function resetGroup() {
   toast("已填入默认值，点击「保存」后生效");
 }
 
+/** 二次确认后删除群级覆盖配置，使指定群重新跟随全局值。 */
 async function followGlobal(groupId) {
   const confirmed = await askConfirm(
     `取消独立配置会删除该群的自有配置，之后跟随全局配置。继续？`
@@ -798,6 +865,7 @@ async function followGlobal(groupId) {
 /* ------------------------------------------------------------------ */
 /* 全局设置（按 _conf_schema.json 渲染）                                */
 /* ------------------------------------------------------------------ */
+/** 检查 schema 条件对象中的每个键值是否与当前配置区块相符。 */
 function conditionOk(meta, scope) {
   if (!meta || !meta.condition) return true;
   return Object.entries(meta.condition).every(
@@ -805,6 +873,7 @@ function conditionOk(meta, scope) {
   );
 }
 
+/** 根据全局配置 schema 类型生成对应输入控件及其 data 属性。 */
 function buildSchemaControl(meta, value, path) {
   const type = String(meta.type || "string");
   if (type === "bool") {
@@ -864,6 +933,7 @@ function buildSchemaControl(meta, value, path) {
   )}" />`;
 }
 
+/** 递归渲染 schema 对象与字段行，并在初始状态隐藏条件字段。 */
 function renderSchemaBlock(schema, scopeValues, prefix) {
   let html = "";
   for (const [key, meta] of Object.entries(schema)) {
@@ -900,6 +970,7 @@ function renderSchemaBlock(schema, scopeValues, prefix) {
   return html;
 }
 
+/** 收集当前面板值并重绘活动全局配置区块，随后恢复输入事件绑定。 */
 function rerenderActiveGlobalPanel() {
   const sections = globalSections();
   const entry = sections.find(([key]) => key === state.globalTab) || sections[0];
@@ -919,6 +990,7 @@ function rerenderActiveGlobalPanel() {
   refreshGlobalConditions();
 }
 
+/** 根据已填写的全局配置值同步 schema 条件字段的显示状态。 */
 function refreshGlobalConditions() {
   const values = collectGlobalValues();
   document.querySelectorAll("#global-form [data-cond]").forEach((row) => {
@@ -938,6 +1010,7 @@ function refreshGlobalConditions() {
   });
 }
 
+/** 绑定全局表单输入监听，更新滑块标签并及时刷新条件字段。 */
 function bindGlobalInputs() {
   document.querySelectorAll("#global-form [data-global-path]").forEach((input) => {
     if (input.type === "range") {
@@ -956,12 +1029,14 @@ function bindGlobalInputs() {
   });
 }
 
+/** 从加载的 schema 中提取可作为一级 Tab 的对象配置区块。 */
 function globalSections() {
   return Object.entries(state.schema || {}).filter(
     ([, meta]) => meta && meta.type === "object" && meta.items
   );
 }
 
+/** 切换全局设置的活动 Tab 和相应配置面板。 */
 function switchGlobalTab(key) {
   state.globalTab = key;
   document.querySelectorAll("#global-tabs .tab").forEach((tab) => {
@@ -972,6 +1047,7 @@ function switchGlobalTab(key) {
   });
 }
 
+/** 依据 schema 渲染全局配置 Tab 和递归字段表单。 */
 function renderGlobalForm() {
   const sections = globalSections();
   if (!sections.length) {
@@ -1012,6 +1088,7 @@ function renderGlobalForm() {
   ensureTabVisible("global-tabs");
 }
 
+/** 递归提取 schema 默认值并复制数组/对象，避免共享引用被表单修改。 */
 function schemaDefaults(schema) {
   const defaults = {};
   for (const [key, meta] of Object.entries(schema || {})) {
@@ -1027,6 +1104,7 @@ function schemaDefaults(schema) {
   return defaults;
 }
 
+/** 从后端载入 schema、全局配置和 provider 选项后刷新设置表单。 */
 async function loadGlobal() {
   try {
     const data = await callApi("GET", "config");
@@ -1046,6 +1124,7 @@ async function loadGlobal() {
   }
 }
 
+/** 将编辑中的全局值重置为 schema 默认值，不在此处立即保存。 */
 function resetGlobalDefaults() {
   if (!state.schema || !Object.keys(state.schema).length) {
     toast("配置尚未加载完成，请稍候", true);
@@ -1057,6 +1136,7 @@ function resetGlobalDefaults() {
   toast("已填入默认值，点击「保存」后生效");
 }
 
+/** 从 DOM 控件重建完整嵌套配置对象，供服务端 schema 校验。 */
 function collectGlobalValues() {
   const values = {};
   document.querySelectorAll("#global-form [data-global-path]").forEach((input) => {
@@ -1086,6 +1166,7 @@ function collectGlobalValues() {
   return values;
 }
 
+/** 提交收集后的全局设置，展示写盘警告，并刷新配置及概览。 */
 async function saveGlobal() {
   const button = $("save-global");
   button.disabled = true;
@@ -1111,6 +1192,7 @@ async function saveGlobal() {
 /* ------------------------------------------------------------------ */
 /* 记忆 RAG                                                            */
 /* ------------------------------------------------------------------ */
+/** 加载记忆统计；需要筛选器选项时同时更新可用群作用域。 */
 async function loadRagStats(updateScopes = false) {
   try {
     const data = await callApi("GET", "rag/stats");
@@ -1148,6 +1230,7 @@ async function loadRagStats(updateScopes = false) {
   }
 }
 
+/** 渲染分页记忆记录，并为详情与删除按钮绑定对应操作。 */
 function renderRagRows(items) {
   const body = $("rag-body");
   if (!Array.isArray(items) || !items.length) {
@@ -1199,11 +1282,13 @@ const AUTO_SCOPE_LABELS = {
   group: "仅本群",
 };
 
+/** 将数据库中的自动记忆来源标识转换为界面中文标签。 */
 function autoSourceLabel(source) {
   const map = { model: "模型抽取", keyword: "关键词", manual: "手动", selftest: "自检" };
   return map[source] || source || "手动";
 }
 
+/** 获取自动记忆的当前开关、参数和来源统计。 */
 async function loadAutoMemory() {
   try {
     const data = await callApi("GET", "memory/auto");
@@ -1216,6 +1301,7 @@ async function loadAutoMemory() {
   }
 }
 
+/** 展示自动记忆参数、开关状态和关键词/模型的记忆数量统计。 */
 function renderAutoMemory(data) {
   if (!data) return;
   const enabled = Boolean(data.enabled);
@@ -1253,6 +1339,7 @@ function renderAutoMemory(data) {
     </div>`;
 }
 
+/** 切换自动记忆开关并刷新面板及记忆统计。 */
 async function toggleAutoMemory() {
   const current = state.autoMemory;
   if (!current) return;
@@ -1272,6 +1359,7 @@ async function toggleAutoMemory() {
   }
 }
 
+/** 以当前页码、关键词、群范围和角色筛选条件加载记忆列表。 */
 async function loadRagList() {
   const params = {
     page: state.rag.page,
@@ -1296,6 +1384,7 @@ async function loadRagList() {
   }
 }
 
+/** 查询并在详情抽屉中展示指定记忆的完整 JSON 内容。 */
 async function showMemory(memoryId) {
   try {
     const data = await callApi("GET", `rag/${encodeURIComponent(memoryId)}`);
@@ -1308,11 +1397,13 @@ async function showMemory(memoryId) {
   }
 }
 
+/** 关闭记忆详情/自检共用的侧边抽屉。 */
 function closeDetail() {
   $("detail").classList.remove("open");
   $("detail").setAttribute("aria-hidden", "true");
 }
 
+/** 确认删除指定记忆，并在成功后更新统计与当前列表。 */
 async function deleteMemory(memoryId) {
   const confirmed = await askConfirm(`确定删除记忆 ${memoryId}？该操作不可恢复`);
   if (!confirmed) return;
@@ -1326,6 +1417,7 @@ async function deleteMemory(memoryId) {
   }
 }
 
+/** 执行记忆 RAG 后端自检并在详情抽屉展示各步骤结果。 */
 async function ragSelftest() {
   const button = $("rag-selftest");
   button.disabled = true;
@@ -1351,6 +1443,7 @@ async function ragSelftest() {
   }
 }
 
+/** 确认执行旧记录规范化，并展示检查/更新数量。 */
 async function cleanupMemories() {
   const confirmed = await askConfirm(
     "将把旧记录的毫秒时间戳规范化，并刷新时区元数据。继续？"
@@ -1369,6 +1462,7 @@ async function cleanupMemories() {
 /* ------------------------------------------------------------------ */
 /* 事件绑定                                                            */
 /* ------------------------------------------------------------------ */
+/** 一次性绑定页面导航、群配置、全局表单和记忆操作的事件处理器。 */
 function bindEvents() {
   $("menu-btn").addEventListener("click", () => {
     const opened = $("drawer").classList.contains("open");
@@ -1548,6 +1642,7 @@ function bindEvents() {
 /* ------------------------------------------------------------------ */
 /* 启动                                                                */
 /* ------------------------------------------------------------------ */
+/** 等待 AstrBot bridge、注册主题变化监听，再进入状态概览页。 */
 async function init() {
   bindEvents();
   void initMorphIcons();
