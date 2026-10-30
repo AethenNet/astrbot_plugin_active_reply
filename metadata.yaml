@@ -4,6 +4,8 @@ desc: 群聊主动回复增强插件：React 群聊上下文、模型判定主�
 short_desc: 让 Bot 自己决定何时开口、@ 谁、引用哪条消息。
 author: Dew
 repo: https://github.com/AethenNet/astrbot_plugin_active_reply
-version: v1.0.2
-category: 工具
+version: v1.0.3
+category: 工具、AI 增强
+support_platforms:
+  - aiocqhttp
 astrbot_version: ">=4.0.0"

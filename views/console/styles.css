@@ -1756,3 +1756,192 @@ button:disabled {
 .source-pill {
   font-size: 11px;
 }
+
+/* ---------- 用户屏蔽 ---------- */
+.drawer-foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.drawer-foot-actions .drawer-settings {
+  align-self: center;
+}
+
+.block-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.block-head h3,
+.panel h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.block-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.block-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.block-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.block-user {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.block-until {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.block-row-sub {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.block-row .link-btn {
+  align-self: flex-end;
+}
+
+.block-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+  align-items: end;
+}
+
+.block-form.compact {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.block-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.block-form .primary {
+  justify-self: start;
+}
+
+/* 屏蔽列表：搜索与折叠 */
+.block-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.block-toolbar .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.block-list.collapsed {
+  display: none;
+}
+
+/* 屏蔽设置页：面板间距 */
+#view-blocks .panel {
+  margin-bottom: 18px;
+}
+
+/* 主题切换（纯图标按钮） */
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.theme-btn:hover {
+  background: var(--surface-3);
+}
+
+.theme-btn:active {
+  transform: scale(0.94);
+}
+
+.theme-btn .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---------- 按钮点击反馈：图标形变为转圈并锁定 1 秒 ---------- */
+button.btn-loading {
+  position: relative;
+  cursor: progress;
+  pointer-events: none;
+}
+
+button .icon {
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+button.btn-loading .icon {
+  opacity: 0;
+  transform: scale(0.15) rotate(-120deg);
+}
+
+.btn-spinner {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: areply-spin 0.7s linear infinite, areply-fade 0.15s ease;
+}
+
+@keyframes areply-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes areply-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

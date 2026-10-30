@@ -12,7 +12,7 @@
  * 已持久化数据。各视图函数只负责当前页面区域，避免一次操作重建无关页面。
  */
 
-const UI_BUILD = 14;
+const UI_BUILD = 19;
 console.info(`[ActiveReply] UI build ${UI_BUILD}`);
 
 const bridge = window.AstrBotPluginView || window.AstrBotPluginPage || null;
@@ -35,6 +35,14 @@ const state = {
   schema: null,
   globalValues: null,
   autoMemory: null,
+  blocks: null,
+  groupBlocks: [],
+  themeMode: "system",
+  systemDark: false,
+  blockState: {
+    global: { search: "", expanded: false },
+    group: { search: "", expanded: false },
+  },
   rag: {
     page: 1,
     pageSize: 20,
@@ -219,10 +227,81 @@ function fallbackAvatar(name) {
 /* ------------------------------------------------------------------ */
 /* 主题                                                                */
 /* ------------------------------------------------------------------ */
+const THEME_KEY = "areply.theme";
+const THEME_CYCLE = ["system", "light", "dark"];
+const THEME_LABELS = {
+  system: "跟随系统",
+  light: "日间模式",
+  dark: "夜间模式",
+};
+const THEME_ICONS = {
+  system:
+    "M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM8 21h8M12 17v4",
+  light:
+    "M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8ZM12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41",
+  dark: "M12 3a6 6 0 0 0 9 9a9 9 0 1 1-9-9Z",
+};
+
 /** 将 AstrBot 面板提供的主题状态映射到 body 属性与状态徽标。 */
 function applyTheme(isDark) {
   document.body.dataset.theme = isDark ? "dark" : "light";
   $("theme-chip").textContent = isDark ? "深色" : "浅色";
+}
+
+/** 读取本地保存的主题偏好；默认跟随系统。 */
+function loadThemeMode() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (THEME_CYCLE.includes(saved)) return saved;
+  } catch (error) {
+    console.warn("读取主题偏好失败", error);
+  }
+  return "system";
+}
+
+/** 把主题图标切换到对应形状（带 Morphicons 形变）。 */
+function setThemeIcon(mode) {
+  const next = THEME_ICONS[mode] || THEME_ICONS.system;
+  if (themeMorph) {
+    try {
+      themeMorph.morphTo(next);
+      return;
+    } catch (error) {
+      themeMorph = null;
+    }
+  }
+  const path = $("theme-path");
+  if (path) path.setAttribute("d", next);
+}
+
+/** 应用主题模式：system 跟随系统，light/dark 为手动覆盖。 */
+function applyThemeMode(mode, persist = false) {
+  const nextMode = THEME_CYCLE.includes(mode) ? mode : "system";
+  state.themeMode = nextMode;
+  const isDark =
+    nextMode === "dark" || (nextMode === "system" && Boolean(state.systemDark));
+  applyTheme(isDark);
+  setThemeIcon(nextMode);
+  const button = $("theme-btn");
+  if (button) {
+    button.title = `主题：${THEME_LABELS[nextMode]}（点击切换）`;
+    button.setAttribute("aria-label", `当前主题：${THEME_LABELS[nextMode]}，点击切换`);
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_KEY, nextMode);
+    } catch (error) {
+      console.warn("保存主题偏好失败", error);
+    }
+  }
+}
+
+/** 循环切换：跟随系统 → 日间 → 夜间 → 跟随系统。 */
+function cycleTheme() {
+  const index = THEME_CYCLE.indexOf(state.themeMode);
+  const next = THEME_CYCLE[(index + 1) % THEME_CYCLE.length];
+  applyThemeMode(next, true);
+  toast(`主题：${THEME_LABELS[next]}`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -246,12 +325,15 @@ function switchView(name) {
     void loadAutoMemory();
     void loadRagStats(true);
     void loadRagList();
+  } else if (name === "blocks") {
+    void loadBlocks();
   } else if (name === "settings") {
     void loadGlobal();
   }
 }
 
 let menuMorph = null;
+let themeMorph = null;
 const MENU_PATH_D = "M4 5h16M4 12h16M4 19h16";
 const CLOSE_PATH_D = "M18 6L6 18M6 6l12 12";
 
@@ -260,11 +342,17 @@ async function initMorphIcons() {
   try {
     const { createMorph } = await import("./vendor/morphicons/dom.js");
     const path = document.getElementById("menu-path");
-    if (!path) return;
-    menuMorph = createMorph(path, MENU_PATH_D);
-    menuMorph.set(MENU_PATH_D);
+    if (path) {
+      menuMorph = createMorph(path, MENU_PATH_D);
+      menuMorph.set(MENU_PATH_D);
+    }
+    const themePath = document.getElementById("theme-path");
+    if (themePath) {
+      themeMorph = createMorph(themePath, THEME_ICONS[state.themeMode]);
+      themeMorph.set(THEME_ICONS[state.themeMode]);
+    }
   } catch (error) {
-    console.warn("[ActiveReply] morphicons 加载失败，菜单图标回退为静态切换", error);
+    console.warn("[ActiveReply] morphicons 加载失败，图标回退为静态切换", error);
   }
 }
 
@@ -688,10 +776,51 @@ function renderGroupPanel() {
     }" data-panel="${group.tab}"><h4>${escapeHtml(group.title)}</h4>${rows}</div>`;
   }).join("");
 
-  $("group-form").innerHTML = panels;
+  const blockPanel = `
+    <div class="tab-panel ${state.currentTab === "user_block" ? "active" : ""}" data-panel="user_block">
+      <h4>用户屏蔽</h4>
+      <p class="muted small">只作用于本群，被屏蔽用户的消息会被直接忽略</p>
+      <div class="block-form compact">
+        <label class="block-field"><span>用户 ID</span>
+          <input id="group-block-user" class="input mono" placeholder="QQ 号或字母数字" /></label>
+        <label class="block-field"><span>屏蔽原因</span>
+          <input id="group-block-reason" class="input" placeholder="例如：广告、刷屏" /></label>
+        <label class="block-field"><span>屏蔽时间</span>
+          <input id="group-block-duration" class="input mono" value="0" placeholder="0=永久，或 30m" /></label>
+        <button id="group-block-add" class="primary small-btn" type="button">本群屏蔽</button>
+      </div>
+      <div class="block-toolbar">
+        <input id="group-block-search" class="input" placeholder="搜索用户 ID 或原因" />
+        <button id="group-block-toggle" class="ghost small-btn" type="button">展开</button>
+      </div>
+      <div id="group-block-list" class="block-list collapsed">
+        <p class="muted small pad">加载中…</p>
+      </div>
+    </div>`;
+
+  $("group-form").innerHTML = panels + blockPanel;
   bindFormEvents();
   switchTab(state.currentTab);
   ensureTabVisible("group-tabs");
+  const groupAdd = $("group-block-add");
+  if (groupAdd) groupAdd.addEventListener("click", () => void onBlockAddGroup());
+  const groupSearch = $("group-block-search");
+  if (groupSearch) {
+    groupSearch.value = state.blockState.group.search;
+    groupSearch.addEventListener("input", (event) => {
+      state.blockState.group.search = event.target.value;
+      if (event.target.value.trim()) state.blockState.group.expanded = true;
+      renderGroupBlocks();
+    });
+  }
+  const groupToggle = $("group-block-toggle");
+  if (groupToggle) {
+    groupToggle.addEventListener("click", () => {
+      state.blockState.group.expanded = !state.blockState.group.expanded;
+      renderGroupBlocks();
+    });
+  }
+  if (state.currentTab === "user_block") void loadGroupBlocks();
 }
 
 /** 在下一帧将当前活动 Tab 滚入其横向滚动容器的可视范围。 */
@@ -727,6 +856,7 @@ function switchTab(name) {
   document.querySelectorAll("#group-form .tab-panel").forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.panel === name);
   });
+  if (name === "user_block") void loadGroupBlocks();
 }
 
 /** 将群级表单控件的修改同步回 state.currentGroup.values。 */
@@ -1289,6 +1419,201 @@ function autoSourceLabel(source) {
 }
 
 /** 获取自动记忆的当前开关、参数和来源统计。 */
+/* ------------------------------------------------------------------ */
+/* 用户屏蔽                                                             */
+/* ------------------------------------------------------------------ */
+function renderBlockList(container, entries, scope, groupId, emptyText) {
+  if (!container) return;
+  if (!entries || !entries.length) {
+    container.innerHTML = `<p class="muted small pad">${escapeHtml(
+      emptyText || "暂无屏蔽记录"
+    )}</p>`;
+    return;
+  }
+  container.innerHTML = entries
+    .map(
+      (entry) => `
+      <div class="block-row">
+        <div class="block-row-main">
+          <span class="block-user mono">${escapeHtml(entry.user_id)}</span>
+          <span class="pill">${escapeHtml(entry.scope_text || (entry.scope === "all" ? "全部会话" : "仅本群"))}</span>
+          <span class="block-until">${escapeHtml(entry.until_text || "永久")}</span>
+        </div>
+        <div class="block-row-sub">原因：${escapeHtml(entry.reason || "未说明")}</div>
+        <button class="link-btn danger" type="button"
+          data-block-remove="${escapeHtml(entry.user_id)}"
+          data-block-scope="${escapeHtml(scope)}"
+          data-block-group="${escapeHtml(groupId || "")}">解除</button>
+      </div>`
+    )
+    .join("");
+}
+
+function filterBlocks(entries, keyword) {
+  const text = String(keyword || "").trim().toLowerCase();
+  if (!text) return entries || [];
+  return (entries || []).filter(
+    (entry) =>
+      String(entry.user_id || "").toLowerCase().includes(text) ||
+      String(entry.reason || "").toLowerCase().includes(text)
+  );
+}
+
+function renderGlobalBlocks() {
+  const view = state.blockState.global;
+  const entries = filterBlocks((state.blocks || {}).global, view.search);
+  renderBlockList(
+    $("block-global-list"),
+    entries,
+    "all",
+    "",
+    view.search ? "没有匹配的屏蔽记录" : "暂无屏蔽记录"
+  );
+  const list = $("block-global-list");
+  if (list) list.classList.toggle("collapsed", !view.expanded);
+  const toggle = $("block-toggle");
+  if (toggle) {
+    toggle.textContent = view.expanded ? "折叠" : `展开（${entries.length}）`;
+  }
+}
+
+function renderGroupBlocks() {
+  const view = state.blockState.group;
+  const entries = filterBlocks(state.groupBlocks, view.search);
+  renderBlockList(
+    $("group-block-list"),
+    entries,
+    "group",
+    (state.currentGroup || {}).group_id || "",
+    view.search ? "没有匹配的屏蔽记录" : "本群暂无单独屏蔽记录"
+  );
+  const list = $("group-block-list");
+  if (list) list.classList.toggle("collapsed", !view.expanded);
+  const toggle = $("group-block-toggle");
+  if (toggle) {
+    toggle.textContent = view.expanded ? "折叠" : `展开（${entries.length}）`;
+  }
+}
+
+async function loadBlocks() {
+  try {
+    const data = await callApi("GET", "blocks");
+    state.blocks = data;
+    const status = $("block-status");
+    status.textContent = data.enabled ? "已启用" : "已关闭";
+    status.className = `pill ${data.enabled ? "" : "muted-pill"}`;
+    renderGlobalBlocks();
+  } catch (error) {
+    $("block-global-list").innerHTML = `<p class="muted small pad">加载失败：${escapeHtml(
+      error.message || "未知错误"
+    )}</p>`;
+  }
+}
+
+async function loadGroupBlocks() {
+  const data = state.currentGroup;
+  if (!data) return;
+  try {
+    const result = await callApi("GET", "blocks", { group_id: data.group_id });
+    state.groupBlocks = result.group || [];
+    renderGroupBlocks();
+  } catch (error) {
+    const box = $("group-block-list");
+    if (box) {
+      box.innerHTML = `<p class="muted small pad">加载失败：${escapeHtml(
+        error.message || "未知错误"
+      )}</p>`;
+    }
+  }
+}
+
+async function submitBlock(payload) {
+  return callApi("POST", "blocks/add", payload);
+}
+
+async function onBlockAddGlobal() {
+  const userId = $("block-user").value.trim();
+  const reason = $("block-reason").value.trim();
+  const scope = $("block-scope").value;
+  const groupId = $("block-group").value.trim();
+  const duration = $("block-duration").value.trim() || "0";
+  if (!/^[A-Za-z0-9]+$/.test(userId)) {
+    toast("用户 ID 只能包含英文字母和数字", true);
+    return;
+  }
+  try {
+    await submitBlock({
+      user_id: userId,
+      reason,
+      scope,
+      group_id: scope === "group" ? groupId : "",
+      duration,
+    });
+    toast("已添加屏蔽");
+    $("block-user").value = "";
+    $("block-reason").value = "";
+    $("block-duration").value = "0";
+    if (scope === "all") {
+      void loadBlocks();
+    } else {
+      toast(`已加入群 ${groupId} 的屏蔽列表`, false);
+    }
+  } catch (error) {
+    toast(error.message || "添加失败", true);
+  }
+}
+
+async function onBlockAddGroup() {
+  const data = state.currentGroup;
+  if (!data) return;
+  const userId = $("group-block-user").value.trim();
+  const reason = $("group-block-reason").value.trim();
+  const duration = $("group-block-duration").value.trim() || "0";
+  if (!/^[A-Za-z0-9]+$/.test(userId)) {
+    toast("用户 ID 只能包含英文字母和数字", true);
+    return;
+  }
+  try {
+    await submitBlock({
+      user_id: userId,
+      reason,
+      scope: "group",
+      group_id: data.group_id,
+      duration,
+    });
+    toast("已在本群屏蔽该用户");
+    $("group-block-user").value = "";
+    $("group-block-reason").value = "";
+    $("group-block-duration").value = "0";
+    void loadGroupBlocks();
+  } catch (error) {
+    toast(error.message || "添加失败", true);
+  }
+}
+
+async function removeBlockEntry(button) {
+  const userId = button.dataset.blockRemove;
+  const scope = button.dataset.blockScope || "all";
+  const groupId = button.dataset.blockGroup || "";
+  button.disabled = true;
+  try {
+    await callApi("POST", "blocks/remove", {
+      user_id: userId,
+      scope,
+      group_id: groupId,
+    });
+    toast("已解除屏蔽");
+    if (scope === "group") {
+      void loadGroupBlocks();
+    } else {
+      void loadBlocks();
+    }
+  } catch (error) {
+    toast(error.message || "解除失败", true);
+    button.disabled = false;
+  }
+}
+
 async function loadAutoMemory() {
   try {
     const data = await callApi("GET", "memory/auto");
@@ -1463,6 +1788,74 @@ async function cleanupMemories() {
 /* 事件绑定                                                            */
 /* ------------------------------------------------------------------ */
 /** 一次性绑定页面导航、群配置、全局表单和记忆操作的事件处理器。 */
+function lockButton(button) {
+  if (button.dataset.locking === "1") return;
+  button.dataset.locking = "1";
+  button.classList.add("btn-loading");
+  button.setAttribute("aria-busy", "true");
+
+  const spinner = document.createElement("span");
+  spinner.className = "btn-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  const icon = button.querySelector("svg.icon");
+  const rect = button.getBoundingClientRect();
+  let left = rect.width / 2;
+  let top = rect.height / 2;
+  if (icon) {
+    const iconRect = icon.getBoundingClientRect();
+    left = iconRect.left - rect.left + iconRect.width / 2;
+    top = iconRect.top - rect.top + iconRect.height / 2;
+  }
+  spinner.style.left = `${left}px`;
+  spinner.style.top = `${top}px`;
+  button.appendChild(spinner);
+
+  window.setTimeout(() => {
+    button.classList.remove("btn-loading");
+    button.removeAttribute("aria-busy");
+    delete button.dataset.locking;
+    spinner.remove();
+  }, 1000);
+}
+
+const FEEDBACK_SELECTOR = [
+  "#save-group",
+  "#save-global",
+  "#reset-group",
+  "#reset-global",
+  "#rag-reset",
+  "#overview-refresh",
+  "#groups-refresh",
+  "#rag-search",
+  "#rag-cleanup",
+  "#rag-selftest",
+  "#rag-prev",
+  "#rag-next",
+  "#auto-memory-toggle",
+  "#block-add",
+  "#group-block-add",
+  "#modal-ok",
+  "[data-delete]",
+  "[data-block-remove]",
+  "[data-feedback]",
+].join(",");
+
+function installButtonFeedback() {
+  document.addEventListener(
+    "click",
+    (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      if (button.classList.contains("no-lock")) return;
+      if (!button.matches(FEEDBACK_SELECTOR)) return;
+      if (button.classList.contains("btn-loading")) return;
+      if (button.disabled) return;
+      lockButton(button);
+    },
+    true
+  );
+}
+
 function bindEvents() {
   $("menu-btn").addEventListener("click", () => {
     const opened = $("drawer").classList.contains("open");
@@ -1521,6 +1914,13 @@ function bindEvents() {
       if ($("independent-toggle").checked) return;
       const button = event.target.closest("button");
       if (!button) return;
+      // “用户屏蔽”不是群配置覆盖项，不受「先开独立配置」限制
+      if (
+        button.closest('[data-panel="user_block"]') ||
+        (button.classList.contains("tab") && button.dataset.tab === "user_block")
+      ) {
+        return;
+      }
       shakeIndependent();
       if (!button.classList.contains("tab")) {
         // 保存 / 恢复默认：直接拦下，避免重复提示
@@ -1608,6 +2008,22 @@ function bindEvents() {
     state.rag.page = 1;
     void loadRagList();
   });
+  $("theme-btn").addEventListener("click", () => cycleTheme());
+  $("drawer-blocks").addEventListener("click", () => switchView("blocks"));
+  $("block-add").addEventListener("click", () => void onBlockAddGlobal());
+  $("block-search").addEventListener("input", (event) => {
+    state.blockState.global.search = event.target.value;
+    if (event.target.value.trim()) state.blockState.global.expanded = true;
+    renderGlobalBlocks();
+  });
+  $("block-toggle").addEventListener("click", () => {
+    state.blockState.global.expanded = !state.blockState.global.expanded;
+    renderGlobalBlocks();
+  });
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-block-remove]");
+    if (button) void removeBlockEntry(button);
+  });
   $("auto-memory-toggle").addEventListener("click", () => void toggleAutoMemory());
   $("auto-memory-settings").addEventListener("click", () => {
     state.globalTab = "memory_rag";
@@ -1637,6 +2053,7 @@ function bindEvents() {
     }
   });
   $("detail-close").addEventListener("click", closeDetail);
+  installButtonFeedback();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1645,8 +2062,12 @@ function bindEvents() {
 /** 等待 AstrBot bridge、注册主题变化监听，再进入状态概览页。 */
 async function init() {
   bindEvents();
+  state.themeMode = loadThemeMode();
+  state.systemDark =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
   void initMorphIcons();
-  applyTheme(false);
+  applyThemeMode(state.themeMode);
   $("drawer-version").textContent = `UI${UI_BUILD}`;
   if (!bridge) {
     document.body.insertAdjacentHTML(
@@ -1659,12 +2080,16 @@ async function init() {
   try {
     const context = await bridge.ready();
     if (context) {
-      applyTheme(Boolean(context.isDark));
+      state.systemDark = Boolean(context.isDark);
+      applyThemeMode(state.themeMode);
       document.title = context.pageTitle || "主动回复 · 控制台";
     }
     if (typeof bridge.onContext === "function") {
       bridge.onContext((next) => {
-        if (next) applyTheme(Boolean(next.isDark));
+        if (next) {
+          state.systemDark = Boolean(next.isDark);
+          applyThemeMode(state.themeMode);
+        }
       });
     }
   } catch (error) {

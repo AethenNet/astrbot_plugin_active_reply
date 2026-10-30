@@ -5,7 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>主动回复 · 控制台</title>
-    <link rel="stylesheet" href="./styles.css?v=14" />
+    <link rel="stylesheet" href="./styles.css?v=19" />
   </head>
   <body>
     <!-- 图标库（内联 SVG，避免依赖外部图标字体/emoji） -->
@@ -77,7 +77,15 @@
         </div>
 
         <div class="drawer-foot">
-          <button id="drawer-settings" class="drawer-settings" title="直接修改插件全局配置"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>全局设置</button>
+          <div class="drawer-foot-actions">
+            <button id="theme-btn" class="theme-btn" type="button" title="主题：跟随系统" aria-label="切换主题">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path id="theme-path" d="M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM8 21h8M12 17v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
+            </button>
+            <button id="drawer-settings" class="drawer-settings" title="直接修改插件全局配置"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>全局设置</button>
+            <button id="drawer-blocks" class="drawer-settings" title="管理用户屏蔽记录"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg>屏蔽设置</button>
+          </div>
           <p class="muted small" id="drawer-version">v-</p>
         </div>
       </aside>
@@ -169,6 +177,7 @@
                   <button class="tab active" data-tab="active_reply" role="tab" title="概率 / 模型判定、触发积累、黑白名单"><svg class="icon" aria-hidden="true"><use href="#i-message"></use></svg>消息主动回复</button>
                   <button class="tab" data-tab="group_context_enhancement" role="tab" title="群聊历史记录与注入、图片转述"><svg class="icon" aria-hidden="true"><use href="#i-layers"></use></svg>群聊上下文增强</button>
                   <button class="tab" data-tab="group_reply_enhancement" role="tab" title="React Pattern、角色显示、智能 @ 与引用"><svg class="icon" aria-hidden="true"><use href="#i-sparkles"></use></svg>群聊回复增强</button>
+                  <button class="tab" data-tab="user_block" role="tab" title="本群单独屏蔽用户"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg>用户屏蔽</button>
                 </div>
 
                 <div id="group-form" class="form-body"></div>
@@ -264,6 +273,61 @@
           </div>
         </section>
 
+        <!-- 屏蔽设置 -->
+        <section id="view-blocks" class="view">
+          <div class="section-head">
+            <h2>屏蔽设置</h2>
+            <p class="muted">被屏蔽用户的消息会被直接忽略；全局屏蔽覆盖所有群聊与私聊</p>
+          </div>
+
+          <div class="panel">
+            <h3>添加屏蔽</h3>
+            <div class="block-form">
+              <label class="block-field">
+                <span>用户 ID</span>
+                <input id="block-user" class="input mono" placeholder="QQ 号或字母数字" />
+              </label>
+              <label class="block-field">
+                <span>屏蔽原因</span>
+                <input id="block-reason" class="input" placeholder="例如：广告、刷屏" />
+              </label>
+              <label class="block-field">
+                <span>屏蔽范围</span>
+                <select id="block-scope" class="input">
+                  <option value="all">全部会话（含私聊）</option>
+                  <option value="group">仅指定群</option>
+                </select>
+              </label>
+              <label class="block-field">
+                <span>群号（仅“指定群”时必填）</span>
+                <input id="block-group" class="input mono" placeholder="例如 123456789" />
+              </label>
+              <label class="block-field">
+                <span>屏蔽时间</span>
+                <input id="block-duration" class="input mono" value="0" placeholder="0=永久，或 1d2h / 30m" />
+              </label>
+              <button id="block-add" class="primary small-btn" type="button">添加屏蔽</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="block-head">
+              <div>
+                <h3>全局屏蔽</h3>
+                <p class="muted small">默认包含 4 个机器人账号；与插件配置中的「用户屏蔽 → 黑名单列表」保持一致</p>
+              </div>
+              <span id="block-status" class="pill">-</span>
+            </div>
+            <div class="block-toolbar">
+              <input id="block-search" class="input" placeholder="搜索用户 ID 或原因" />
+              <button id="block-toggle" class="ghost small-btn" type="button">展开</button>
+            </div>
+            <div id="block-global-list" class="block-list collapsed">
+              <p class="muted small pad">加载中…</p>
+            </div>
+          </div>
+        </section>
+
         <!-- 全局设置 -->
         <section id="view-settings" class="view">
           <div class="section-head">
@@ -314,6 +378,6 @@
     </div>
 
     <div id="toast" class="toast"></div>
-    <script type="module" src="./app.js?v=14"></script>
+    <script type="module" src="./app.js?v=19"></script>
   </body>
 </html>

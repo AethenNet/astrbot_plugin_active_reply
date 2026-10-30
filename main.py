@@ -19,11 +19,13 @@ import asyncio
 import base64
 import datetime
 import json
+import logging
 import mimetypes
 import random
 import re
 import time
 import uuid
+from collections import deque
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -54,6 +56,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.utils.io import download_image_by_url
 from mcp import types as mcp_types
 
+from .block_store import BlockStore, format_remaining, parse_until
 from .config_model import (
     DEFAULT_IMAGE_CAPTION_PROMPT,
     PluginConfig,
@@ -75,7 +78,9 @@ from .tags import (
 )
 
 PLUGIN_NAME = "astrbot_plugin_active_reply"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.3"
+BLOCK_HINT_TEXT = "你已被屏蔽，暂时无法与机器人互动。原因：{reason}（{remaining}）"
+REPORT_LOG_MAX = 30
 MAX_MENTIONS_PER_MESSAGE = 3
 MSG_ID_PATTERN = re.compile(r"#msg([^:]+):")
 IMAGE_MARKER_PATTERN = re.compile(r"\[Image(?:: [^\]]*)?\]")
@@ -209,6 +214,13 @@ class ActiveReplyPlugin(star.Star):
             logger.error(f"[ActiveReply] 初始化记忆库失败: {exc}", exc_info=True)
 
         self.group_store = GroupStore(data_dir / "groups.json")
+        self.block_store = BlockStore(data_dir / "user_blocks.json")
+        try:
+            self.block_store.sync_from_config(self._global_cfg().user_block.blacklist)
+        except Exception as exc:
+            logger.warning(f"[ActiveReply] 同步用户屏蔽配置失败: {exc}")
+        self._log_buffer: deque[str] = deque(maxlen=400)
+        self._install_log_handler()
         self.page_api = PageApi(self)
         self._register_web_apis()
 
@@ -250,6 +262,116 @@ class ActiveReplyPlugin(star.Star):
             return str(event.get_group_id() or "").strip()
         except Exception:
             return ""
+
+    # ------------------------------------------------------------------ #
+    # 日志缓冲（调试报告用）
+    # ------------------------------------------------------------------ #
+    def _install_log_handler(self) -> None:
+        """把最近的 AstrBot 日志收进环形缓冲，供 /replytest 报告展示。"""
+        buffer = self._log_buffer
+
+        class _BufferHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:  # noqa: D102
+                try:
+                    text = record.getMessage()
+                except Exception:
+                    return
+                stamp = time.strftime("%H:%M:%S", time.localtime(record.created))
+                buffer.append(
+                    (float(record.created), f"[{stamp}] [{record.name}] {text}")
+                )
+
+        try:
+            handler = _BufferHandler(level=logging.INFO)
+            logging.getLogger().addHandler(handler)
+            self._log_handler = handler
+        except Exception as exc:  # 日志缓冲失败不影响插件运行
+            logger.debug(f"[ActiveReply] 挂载日志缓冲失败: {exc}")
+
+        # AstrBot 的日志走 loguru（logging -> loguru 拦截），root handler 收不到，
+        # 这里额外挂一个 loguru sink，保证调试报告能拿到真实运行日志。
+        self._loguru_sink_id = None
+        try:
+            from loguru import logger as loguru_logger
+
+            def _sink(message) -> None:  # noqa: ANN001 - loguru 传入 Message 对象
+                record = message.record
+                name = str(record["name"] or "")
+                if name.startswith(("aiohttp", "urllib3", "httpx", "charset_normalizer")):
+                    return
+                stamp = record["time"].strftime("%H:%M:%S")
+                buffer.append(
+                    (
+                        float(record["time"].timestamp()),
+                        f"[{stamp}] [{name}] {str(record['message'])[:300]}",
+                    )
+                )
+
+            self._loguru_sink_id = loguru_logger.add(
+                _sink, level="INFO", format="{message}"
+            )
+        except Exception as exc:
+            logger.debug(f"[ActiveReply] 挂载 loguru 日志捕获失败: {exc}")
+
+    def _recent_logs(self, origin: str, limit: int = REPORT_LOG_MAX) -> list[str]:
+        start = float(self.state.turn_started_at.get(origin, 0.0))
+        if start <= 0:
+            return []
+        items = [text for stamp, text in list(self._log_buffer) if stamp >= start]
+        return items[-limit:]
+
+    # ------------------------------------------------------------------ #
+    # 用户屏蔽
+    # ------------------------------------------------------------------ #
+    def _sync_blacklist_config(self) -> None:
+        """把 store 中的全局屏蔽列表写回插件配置，保持两边一致。"""
+        try:
+            ids = [entry["user_id"] for entry in self.block_store.global_entries()]
+            section = self.config.setdefault("group_reply_enhancement", {})
+            block = section.setdefault("user_block", {})
+            block["blacklist"] = ids
+            saver = getattr(self.config, "save_config", None)
+            if callable(saver):
+                saver()
+            self.invalidate_config_cache()
+        except Exception as exc:
+            logger.warning(f"[ActiveReply] 同步屏蔽列表到配置失败: {exc}")
+
+    async def _enforce_user_block(self, event: AstrMessageEvent) -> bool:
+        """命中屏蔽时停止事件；返回 True 表示已拦截。"""
+        cfg = self._global_cfg()
+        if not cfg.user_block.enable:
+            return False
+        sender = str(event.get_sender_id() or "").strip()
+        if not sender:
+            return False
+        try:
+            if event.is_admin():
+                return False  # 管理员不受屏蔽限制，避免无法解禁
+        except Exception:
+            pass
+        group_id = self._group_id(event)
+        entry = self.block_store.is_blocked(sender, group_id)
+        if entry is None:
+            return False
+        logger.info(
+            "[ActiveReply] 用户被屏蔽 | user=%s group=%s scope=%s reason=%s",
+            sender,
+            group_id or "-",
+            entry.get("scope"),
+            entry.get("reason"),
+        )
+        if cfg.user_block.block_hint and getattr(event, "is_at_or_wake_command", False):
+            text = BLOCK_HINT_TEXT.format(
+                reason=entry.get("reason") or "未说明",
+                remaining=format_remaining(float(entry.get("until") or 0)),
+            )
+            try:
+                await event.send(MessageChain([Plain(text)]))
+            except Exception as exc:
+                logger.debug(f"[ActiveReply] 发送屏蔽提示失败: {exc}")
+        event.stop_event()
+        return True
 
     def _global_cfg(self) -> PluginConfig:
         """根据当前全局原始配置生成强类型配置模型。"""
@@ -319,6 +441,10 @@ class ActiveReplyPlugin(star.Star):
         """在 AstrBot 加载完成后同步时区并记录功能开关状态。"""
         # 插件加载后同步记忆展示时区，并输出当前关键功能开关。
         cfg = self._global_cfg()
+        try:
+            self.block_store.sync_from_config(cfg.user_block.blacklist)
+        except Exception as exc:
+            logger.warning(f"[ActiveReply] 同步用户屏蔽配置失败: {exc}")
         if self.memory_store is not None:
             timezone_name = self._resolve_timezone_name()
             self.memory_store.set_display_timezone(timezone_name)
@@ -336,8 +462,16 @@ class ActiveReplyPlugin(star.Star):
         )
 
     async def terminate(self) -> None:
-        """响应插件卸载生命周期；数据库连接由各存储操作独立关闭。"""
-        # 插件卸载生命周期钩子；当前存储操作均由短连接负责关闭。
+        """插件卸载时移除日志捕获。"""
+        try:
+            sink_id = getattr(self, "_loguru_sink_id", None)
+            if sink_id is not None:
+                from loguru import logger as loguru_logger
+
+                loguru_logger.remove(sink_id)
+                self._loguru_sink_id = None
+        except Exception:
+            pass
         logger.info("[ActiveReply] 插件已卸载")
 
     # ------------------------------------------------------------------ #
@@ -411,6 +545,24 @@ class ActiveReplyPlugin(star.Star):
                 self.page_api.memory_auto_toggle,
                 ["POST"],
                 "自动记忆开关",
+            ),
+            (
+                f"/{PLUGIN_NAME}/blocks",
+                self.page_api.blocks,
+                ["GET"],
+                "用户屏蔽列表",
+            ),
+            (
+                f"/{PLUGIN_NAME}/blocks/add",
+                self.page_api.blocks_add,
+                ["POST"],
+                "添加用户屏蔽",
+            ),
+            (
+                f"/{PLUGIN_NAME}/blocks/remove",
+                self.page_api.blocks_remove,
+                ["POST"],
+                "移除用户屏蔽",
             ),
         ]
         for route, handler, methods, desc in routes:
@@ -507,6 +659,10 @@ class ActiveReplyPlugin(star.Star):
         """
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return
+
+        # 屏蔽优先于一切处理：被屏蔽用户的消息（含指令）都不进入插件逻辑
+        if await self._enforce_user_block(event):
+            return
         if self._is_wake_command(event):
             return
 
@@ -562,6 +718,11 @@ class ActiveReplyPlugin(star.Star):
 
         async for item in self._emit_active_reply(event, cfg):
             yield item
+
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def on_private_message(self, event: AstrMessageEvent) -> None:
+        """私聊只做用户屏蔽检查（全局屏蔽同样覆盖私聊）。"""
+        await self._enforce_user_block(event)
 
     async def _decide_reply(self, event: AstrMessageEvent, cfg: PluginConfig) -> bool:
         """根据主动回复模式做一次触发判断，并维护该会话的消息计数。
@@ -1027,6 +1188,7 @@ class ActiveReplyPlugin(star.Star):
 
         async def patched(stream, use_fallback: bool = False):
             """包装原始流发送器，在输出前过滤或转换标签片段。"""
+
             # 包装流式迭代器，在每个文本片段发送前复用标签转换器。
             async def wrapped():
                 """逐段转换流内容；转换失败时保留原始 chunk。"""
@@ -1227,14 +1389,32 @@ class ActiveReplyPlugin(star.Star):
     async def _send_report(self, event: AstrMessageEvent, report: dict) -> None:
         """将执行日志和 token 用量作为合并转发消息发送到当前会话。"""
         # 把判定日志和用量统计打包为平台支持的合并转发消息。
+        origin = event.unified_msg_origin
         lines = list(report.get("logs") or [])
         lines.append("")
-        lines.extend(self._usage_lines(event.unified_msg_origin))
-        title = str(report.get("title") or "主动回复 · 执行日志")
+        lines.extend(self._usage_lines(origin))
         nodes = [
-            Node(content=[Plain(title)], name="ActiveReply", uin="0"),
+            Node(
+                content=[Plain(str(report.get("title") or "主动回复 · 执行日志"))],
+                name="ActiveReply",
+                uin="0",
+            ),
             Node(content=[Plain("\n".join(lines))], name="ActiveReply", uin="0"),
         ]
+        logs = self._recent_logs(origin)
+        if logs:
+            nodes.append(
+                Node(
+                    content=[
+                        Plain(
+                            "AstrBot 日志（本轮）\n"
+                            + "\n".join(line[:200] for line in logs)
+                        )
+                    ],
+                    name="ActiveReply",
+                    uin="0",
+                )
+            )
         await event.send(MessageChain([Nodes(nodes=nodes)]))
 
     @filter.on_llm_response()
@@ -1360,6 +1540,152 @@ class ActiveReplyPlugin(star.Star):
                 "用法：/replytest true 或 /replytest false"
                 "（别名：/回复调试 开、/回复调试 关）"
             )
+
+    # ------------------------------------------------------------------ #
+    # 用户屏蔽指令：/ban /ban-all /remove /pass /remove-all /pass-all
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _command_args(event: AstrMessageEvent, names: list[str]) -> list[str]:
+        text = str(event.message_str or "").strip()
+        for name in sorted(names, key=len, reverse=True):
+            if text.startswith(name):
+                text = text[len(name) :]
+                break
+        return text.split()
+
+    @staticmethod
+    def _first_at_id(event: AstrMessageEvent) -> str:
+        try:
+            for comp in event.get_messages():
+                if isinstance(comp, At):
+                    qq = str(getattr(comp, "qq", "") or "").strip()
+                    if qq.isdigit():
+                        return qq
+        except Exception:
+            pass
+        return ""
+
+    async def _handle_ban(
+        self, event: AstrMessageEvent, *, scope: str
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        gid = self._group_id(event)
+        if scope == "group" and not gid:
+            yield event.plain_result("该指令需要在群聊中使用；全局屏蔽请用 /ban-all")
+            return
+        args = self._command_args(event, ["/ban-all", "ban-all", "/ban", "ban"])
+        if not args:
+            yield event.plain_result(
+                "用法：/ban <时间> <用户ID> <原因>\n"
+                "时间：0 表示永久，也可写 1d2h / 30m（纯数字按分钟）"
+            )
+            return
+        until = parse_until(args[0])
+        if until is None:
+            yield event.plain_result(
+                "时间格式不正确：0 表示永久，或使用 1d2h / 30m / 60（分钟）"
+            )
+            return
+        user_id = args[1] if len(args) > 1 else self._first_at_id(event)
+        if not re.fullmatch(r"[A-Za-z0-9]+", user_id):
+            yield event.plain_result(
+                "用户 ID 只能包含英文字母和数字，也可以直接 @ 对方"
+            )
+            return
+        reason = " ".join(args[2:]).strip() if len(args) > 2 else ""
+        try:
+            entry = self.block_store.add(
+                user_id,
+                reason=reason,
+                scope=scope,
+                until=until,
+                group_id=gid if scope == "group" else "",
+                source="command",
+            )
+        except Exception as exc:
+            yield event.plain_result(f"屏蔽失败：{exc}")
+            return
+        if scope == "all":
+            self._sync_blacklist_config()
+        scope_text = "全部会话（含私聊）" if scope == "all" else f"本群（{gid}）"
+        yield event.plain_result(
+            f"已屏蔽用户 {user_id}\n范围：{scope_text}\n"
+            f"时长：{format_remaining(entry.get('until', 0))}\n"
+            f"原因：{entry.get('reason') or '未说明'}"
+        )
+
+    async def _handle_remove(
+        self, event: AstrMessageEvent, *, scope: str
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        gid = self._group_id(event)
+        if scope == "group" and not gid:
+            yield event.plain_result(
+                "该指令需要在群聊中使用；解除全部屏蔽请用 /remove-all"
+            )
+            return
+        args = self._command_args(
+            event,
+            [
+                "/remove-all",
+                "remove-all",
+                "/remove",
+                "remove",
+                "/pass-all",
+                "pass-all",
+                "/pass",
+                "pass",
+            ],
+        )
+        user_id = args[0] if args else self._first_at_id(event)
+        if not re.fullmatch(r"[A-Za-z0-9]+", user_id):
+            yield event.plain_result("用法：/remove <用户ID>（或 @ 对方）")
+            return
+        if scope == "all":
+            removed = self.block_store.remove_all_for_user(user_id)
+            self._sync_blacklist_config()
+        else:
+            removed = self.block_store.remove(user_id, scope="group", group_id=gid)
+        if removed:
+            scope_text = "全部会话" if scope == "all" else f"本群（{gid}）"
+            yield event.plain_result(f"已解除屏蔽用户 {user_id}（范围：{scope_text}）")
+        else:
+            hint = "；全局屏蔽请用 /remove-all" if scope == "group" else ""
+            yield event.plain_result(f"未找到该用户的屏蔽记录{hint}")
+
+    @permission_type(PermissionType.ADMIN)
+    @filter.command("ban")
+    async def cmd_ban(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """本群屏蔽一个用户：/ban <时间> <用户ID> <原因>。"""
+        async for item in self._handle_ban(event, scope="group"):
+            yield item
+
+    @permission_type(PermissionType.ADMIN)
+    @filter.command("ban-all")
+    async def cmd_ban_all(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """全局屏蔽一个用户（含私聊）：/ban-all <时间> <用户ID> <原因>。"""
+        async for item in self._handle_ban(event, scope="all"):
+            yield item
+
+    @permission_type(PermissionType.ADMIN)
+    @_command_with_alias("remove", {"pass"})
+    async def cmd_remove(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """解除本群屏蔽：/remove <用户ID>，别名 /pass。"""
+        async for item in self._handle_remove(event, scope="group"):
+            yield item
+
+    @permission_type(PermissionType.ADMIN)
+    @_command_with_alias("remove-all", {"pass-all"})
+    async def cmd_remove_all(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """解除全部屏蔽：/remove-all <用户ID>，别名 /pass-all。"""
+        async for item in self._handle_remove(event, scope="all"):
+            yield item
 
     # ------------------------------------------------------------------ #
     # LLM 工具：联网搜索

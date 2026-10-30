@@ -164,6 +164,20 @@ class GroupReplyConfig:
 
 
 @dataclass(frozen=True)
+class UserBlockConfig:
+    """用户屏蔽（作用于全局，群级记录由 block_store 管理）。"""
+
+    enable: bool = True
+    blacklist: tuple[str, ...] = (
+        "2854196310",
+        "2854197266",
+        "3889239358",
+        "3889001246",
+    )
+    block_hint: bool = False
+
+
+@dataclass(frozen=True)
 class WebSearchConfig:
     """联网搜索工具的提供商、协议和结果展示配置。"""
 
@@ -222,6 +236,7 @@ class PluginConfig:
     active_reply: ActiveReplyConfig = field(default_factory=ActiveReplyConfig)
     group_context: GroupContextConfig = field(default_factory=GroupContextConfig)
     group_reply: GroupReplyConfig = field(default_factory=GroupReplyConfig)
+    user_block: UserBlockConfig = field(default_factory=UserBlockConfig)
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     memory_rag: MemoryRagConfig = field(default_factory=MemoryRagConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
@@ -308,6 +323,23 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
         role_display=_to_bool(reply_raw.get("role_display"), True),
         smart_reply=_to_bool(reply_raw.get("smart_reply"), True),
     )
+    block_raw = _section(reply_raw, "user_block")
+    has_blacklist = "blacklist" in block_raw
+    block_ids = block_raw.get("blacklist")
+    if isinstance(block_ids, str):
+        block_ids = [part for part in block_ids.replace("\n", ",").split(",")]
+    if not isinstance(block_ids, (list, tuple)):
+        block_ids = []
+    blacklist = tuple(
+        str(item).strip()
+        for item in block_ids
+        if str(item).strip().isdigit() and len(str(item).strip()) <= 20
+    )
+    user_block = UserBlockConfig(
+        enable=_to_bool(block_raw.get("enable"), True),
+        blacklist=blacklist if has_blacklist else UserBlockConfig().blacklist,
+        block_hint=_to_bool(block_raw.get("block_hint"), False),
+    )
 
     ws_raw = _section(raw, "web_search")
     request_mode = _to_str(ws_raw.get("request_mode"), "auto").lower()
@@ -365,6 +397,7 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
         active_reply=active_reply,
         group_context=group_context,
         group_reply=group_reply,
+        user_block=user_block,
         web_search=web_search,
         memory_rag=memory_rag,
         runtime=runtime,

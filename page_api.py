@@ -19,6 +19,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from .block_store import default_reason, format_remaining, parse_until
 from .config_model import (
     GROUP_OVERRIDE_FIELDS,
     build_global_snapshot,
@@ -551,6 +552,99 @@ class PageApi:
 
         passed = all(step["ok"] for step in steps)
         return ok({"passed": passed, "steps": steps})
+
+    # ------------------------------------------------------------------ #
+    # 用户屏蔽
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _block_view(entry: dict[str, Any]) -> dict[str, Any]:
+        item = dict(entry)
+        item["until_text"] = format_remaining(float(entry.get("until") or 0))
+        item["scope_text"] = (
+            "全部会话（含私聊）" if entry.get("scope") == "all" else "仅本群"
+        )
+        return item
+
+    async def blocks(self) -> dict[str, Any]:
+        plugin = self.plugin
+        cfg = plugin._global_cfg()
+        group_id = str(query_get("group_id", "", str)).strip()
+        try:
+            plugin.block_store.sync_from_config(cfg.user_block.blacklist)
+        except Exception as exc:
+            logger.warning(f"[ActiveReply] 同步屏蔽配置失败: {exc}")
+        return ok(
+            {
+                "enabled": bool(cfg.user_block.enable),
+                "hint": bool(cfg.user_block.block_hint),
+                "global": [
+                    self._block_view(item)
+                    for item in plugin.block_store.global_entries()
+                ],
+                "group": [
+                    self._block_view(item)
+                    for item in plugin.block_store.group_entries(group_id)
+                ]
+                if group_id
+                else [],
+                "group_id": group_id,
+                "defaults": [
+                    {
+                        "user_id": uid,
+                        "reason": default_reason(uid),
+                    }
+                    for uid in cfg.user_block.blacklist
+                ],
+            }
+        )
+
+    async def blocks_add(self) -> dict[str, Any]:
+        payload = await read_json()
+        user_id = str(payload.get("user_id") or "").strip()
+        if not user_id or not user_id.isalnum() or not user_id.isascii():
+            return fail("用户 ID 只能包含英文字母和数字")
+        reason = str(payload.get("reason") or "").strip()
+        scope = "group" if str(payload.get("scope") or "").lower() == "group" else "all"
+        group_id = str(payload.get("group_id") or "").strip()
+        if scope == "group" and not group_id:
+            return fail("群级屏蔽缺少群号")
+        until = parse_until(str(payload.get("duration") or "0"))
+        if until is None:
+            return fail("时间格式不正确：0 表示永久，或使用 1d2h / 30m / 60（分钟）")
+        try:
+            entry = self.plugin.block_store.add(
+                user_id,
+                reason=reason,
+                scope=scope,
+                until=until,
+                group_id=group_id if scope == "group" else "",
+                source="page",
+            )
+        except Exception as exc:
+            return fail(f"添加屏蔽失败：{exc}")
+        if scope == "all":
+            self.plugin._sync_blacklist_config()
+        return ok({"entry": self._block_view(entry)})
+
+    async def blocks_remove(self) -> dict[str, Any]:
+        payload = await read_json()
+        user_id = str(payload.get("user_id") or "").strip()
+        if not user_id or not user_id.isalnum() or not user_id.isascii():
+            return fail("用户 ID 只能包含英文字母和数字")
+        scope = "group" if str(payload.get("scope") or "").lower() == "group" else "all"
+        group_id = str(payload.get("group_id") or "").strip()
+        if scope == "group" and not group_id:
+            return fail("群级屏蔽缺少群号")
+        if scope == "all":
+            removed = self.plugin.block_store.remove_all_for_user(user_id)
+            self.plugin._sync_blacklist_config()
+        else:
+            removed = self.plugin.block_store.remove(
+                user_id, scope="group", group_id=group_id
+            )
+        if not removed:
+            return fail("未找到对应的屏蔽记录")
+        return ok({"removed": True, "user_id": user_id})
 
     # ------------------------------------------------------------------ #
     # 工具
