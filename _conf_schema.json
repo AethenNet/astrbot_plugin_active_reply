@@ -184,6 +184,36 @@
         "hint": "开启后 LLM 会根据需求引用对应消息并在回复中 @ 相关用户，解析 <mention id=\"用户ID\"/> 与 <quote id=\"消息ID\"/> 并转换为平台消息组件",
         "type": "bool",
         "default": true
+      },
+      "user_block": {
+        "description": "用户屏蔽",
+        "hint": "作用于全局：列表中的用户消息会被直接忽略。群级单独屏蔽可在插件页面「屏蔽设置」中配置",
+        "type": "object",
+        "items": {
+          "enable": {
+            "description": "启用",
+            "hint": "关闭后整个用户屏蔽区块不生效（页面与指令添加的记录仍会保留）",
+            "type": "bool",
+            "default": true
+          },
+          "blacklist": {
+            "description": "黑名单列表",
+            "hint": "每行一个用户 ID（QQ 号）。机器人不接收（屏蔽）此列表中用户的所有消息",
+            "type": "list",
+            "default": [
+              "2854196310",
+              "2854197266",
+              "3889239358",
+              "3889001246"
+            ]
+          },
+          "block_hint": {
+            "description": "屏蔽提示",
+            "hint": "开启后被屏蔽的用户 @ 机器人或使用指令时，插件会回复一条被屏蔽提示",
+            "type": "bool",
+            "default": false
+          }
+        }
       }
     }
   },

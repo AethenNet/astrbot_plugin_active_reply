@@ -1,8 +1,10 @@
 /* ==========================================================================
    主动回复（ActiveReply）控制台样式
    深色 / 浅色主题由 body[data-theme] 切换，跟随 AstrBot 面板。
+   颜色与阴影先定义为自定义属性，再由布局、状态卡、配置表单和弹层复用。
    ========================================================================== */
 
+/* 浅色主题的设计 token；主题切换只需改写同名变量，不必重复声明组件规则。 */
 :root {
   --bg: #f5f7fb;
   --bg-glow: radial-gradient(1200px 600px at 10% -10%, #dbe7ff 0%, transparent 60%),
@@ -30,6 +32,7 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
+/* 深色主题仅替换 token，所有组件继续使用相同的语义变量。 */
 body[data-theme="dark"] {
   --bg: #0d1117;
   --bg-glow: radial-gradient(1100px 560px at 8% -12%, #16233f 0%, transparent 62%),
@@ -117,6 +120,7 @@ textarea {
 }
 
 /* ---------- 布局 ---------- */
+/* 页面基础框架、顶栏、内容宽度与视图显隐。 */
 .app-shell {
   min-height: 100vh;
 }
@@ -239,6 +243,7 @@ textarea {
 }
 
 /* ---------- 抽屉导航 ---------- */
+/* 遮罩与侧边抽屉采用固定定位，内部群列表独立滚动。 */
 .scrim {
   position: fixed;
   inset: 0;
@@ -395,6 +400,7 @@ textarea {
 }
 
 /* ---------- 卡片 ---------- */
+/* 状态卡、统计格与轻量标签组成状态概览和记忆统计区域。 */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -542,6 +548,7 @@ textarea {
 }
 
 /* ---------- 群配置 ---------- */
+/* 群目录与编辑器并排布局；窄屏断点会在文件末尾改为单列布局。 */
 .groups-layout {
   display: grid;
   grid-template-columns: 300px 1fr;
@@ -797,6 +804,7 @@ textarea {
 }
 
 /* ---------- 按钮 ---------- */
+/* 统一操作控件的强调色、禁用状态与交互反馈。 */
 button {
   cursor: pointer;
 }
@@ -851,6 +859,7 @@ button:disabled {
 }
 
 /* ---------- 表格 ---------- */
+/* 记忆列表在宽屏使用表格，在窄屏由后续媒体查询切换为卡片样式。 */
 .filters {
   display: grid;
   grid-template-columns: 1.4fr 1fr 1fr auto;
@@ -989,6 +998,7 @@ button:disabled {
 }
 
 /* ---------- 详情 ---------- */
+/* 记忆详情抽屉以覆盖层形式打开，正文使用可换行的等宽文本区域。 */
 .detail {
   position: fixed;
   top: 0;
@@ -1030,6 +1040,7 @@ button:disabled {
 }
 
 /* ---------- 确认弹窗 ---------- */
+/* 页面内确认对话框用于替代 iframe 中可能不可用的 window.confirm。 */
 .modal {
   position: fixed;
   inset: 0;
@@ -1068,6 +1079,7 @@ button:disabled {
 }
 
 /* ---------- 提示 ---------- */
+/* toast 用于反馈短操作结果；错误状态由单独的 danger 色变量表示。 */
 .toast {
   position: fixed;
   left: 50%;
@@ -1097,6 +1109,7 @@ button:disabled {
 }
 
 /* ---------- 响应式（移动端） ---------- */
+/* 逐级缩窄内容间距与栏宽，保证侧栏和表单在触屏尺寸下仍可操作。 */
 @media (max-width: 980px) {
   .groups-layout {
     grid-template-columns: 1fr;
@@ -1742,4 +1755,193 @@ button:disabled {
 
 .source-pill {
   font-size: 11px;
+}
+
+/* ---------- 用户屏蔽 ---------- */
+.drawer-foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.drawer-foot-actions .drawer-settings {
+  align-self: center;
+}
+
+.block-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.block-head h3,
+.panel h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.block-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.block-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.block-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.block-user {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.block-until {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.block-row-sub {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.block-row .link-btn {
+  align-self: flex-end;
+}
+
+.block-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+  align-items: end;
+}
+
+.block-form.compact {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.block-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.block-form .primary {
+  justify-self: start;
+}
+
+/* 屏蔽列表：搜索与折叠 */
+.block-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.block-toolbar .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.block-list.collapsed {
+  display: none;
+}
+
+/* 屏蔽设置页：面板间距 */
+#view-blocks .panel {
+  margin-bottom: 18px;
+}
+
+/* 主题切换（纯图标按钮） */
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.theme-btn:hover {
+  background: var(--surface-3);
+}
+
+.theme-btn:active {
+  transform: scale(0.94);
+}
+
+.theme-btn .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---------- 按钮点击反馈：图标形变为转圈并锁定 1 秒 ---------- */
+button.btn-loading {
+  position: relative;
+  cursor: progress;
+  pointer-events: none;
+}
+
+button .icon {
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+button.btn-loading .icon {
+  opacity: 0;
+  transform: scale(0.15) rotate(-120deg);
+}
+
+.btn-spinner {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: areply-spin 0.7s linear infinite, areply-fade 0.15s ease;
+}
+
+@keyframes areply-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes areply-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }

@@ -24,6 +24,13 @@ DEFAULT_IMAGE_CAPTION_PROMPT = "Please describe the image using Chinese."
 # 基础类型转换
 # --------------------------------------------------------------------------- #
 def _to_bool(value: Any, default: bool) -> bool:
+    """将布尔值、常见字符串或数字转换为 bool。
+
+    Args:
+        value: 原始配置值。
+        default: 输入无法识别时使用的值。
+    """
+    # 兼容面板、JSON 与历史配置中的布尔写法；不认识的值沿用字段默认值。
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -39,6 +46,8 @@ def _to_bool(value: Any, default: bool) -> bool:
 
 
 def _to_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    """解析整数并限制在闭区间 ``[minimum, maximum]`` 内。"""
+    # 将输入安全转换为整数，并统一钳制到配置项允许的闭区间。
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -52,6 +61,8 @@ def _to_float(
     minimum: float,
     maximum: float,
 ) -> float:
+    """解析有限浮点数并限制范围；无效输入返回默认值。"""
+    # 过滤非法及非有限浮点数，避免 NaN/无穷值进入运行时配置。
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -62,11 +73,15 @@ def _to_float(
 
 
 def _to_str(value: Any, default: str = "") -> str:
+    """去除字符串首尾空白，并为 None 或空字符串应用默认值。"""
+    # 去除字符串两侧空白；空值回落到调用方提供的默认值。
     text = str(value).strip() if value is not None else ""
     return text or default
 
 
 def _to_probability(value: Any, default: float) -> float:
+    """解析概率值，保证返回结果位于 0 到 1 之间。"""
+    # 概率配置限定在 [0, 1]，复用浮点数的统一校验逻辑。
     return _to_float(value, default, 0.0, 1.0)
 
 
@@ -88,6 +103,8 @@ def _parse_str_list(value: Any) -> tuple[str, ...]:
 
 
 def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
+    """读取配置区块；字段缺失或不是字典时返回空字典。"""
+    # 配置区块必须为字典，其他类型视为缺省区块以便后续读取安全。
     value = raw.get(key)
     return value if isinstance(value, dict) else {}
 
@@ -97,7 +114,12 @@ def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class ActiveReplyConfig:
-    """消息主动回复。"""
+    """主动发言触发策略和生效群范围。
+
+    ``mode`` 决定使用概率抽样还是模型判定；两种模式都依据
+    ``trigger_threshold`` 维护每群消息计数。名单模式为白名单时仅允许
+    ``whitelist`` 中的群，为黑名单时除 ``blacklist`` 外均允许。
+    """
 
     enable: bool = False
     mode: str = "probability"
@@ -112,7 +134,12 @@ class ActiveReplyConfig:
 
 @dataclass(frozen=True)
 class GroupContextConfig:
-    """群聊上下文增强。"""
+    """供模型参考的群聊历史及图片描述设置。
+
+    ``enable`` 控制历史采集/注入，``max_messages`` 限制每个会话保留的消息数；
+    发送者 ID 和角色标记用于帮助模型识别发言人。图片描述需要单独开启，
+    并可指定用于视觉理解的提供商与提示词。
+    """
 
     enable: bool = True
     max_messages: int = 200
@@ -125,7 +152,11 @@ class GroupContextConfig:
 
 @dataclass(frozen=True)
 class GroupReplyConfig:
-    """群聊回复增强。"""
+    """群聊互动增强的父开关及子功能开关。
+
+    ``react_pattern`` 是总开关；``role_display`` 与 ``smart_reply`` 分别控制
+    是否把成员角色及 @/引用互动规则提供给模型，单独开启子开关不会越过总开关。
+    """
 
     react_pattern: bool = False
     role_display: bool = True
@@ -133,8 +164,22 @@ class GroupReplyConfig:
 
 
 @dataclass(frozen=True)
+class UserBlockConfig:
+    """用户屏蔽（作用于全局，群级记录由 block_store 管理）。"""
+
+    enable: bool = True
+    blacklist: tuple[str, ...] = (
+        "2854196310",
+        "2854197266",
+        "3889239358",
+        "3889001246",
+    )
+    block_hint: bool = False
+
+
+@dataclass(frozen=True)
 class WebSearchConfig:
-    """联网搜索。"""
+    """联网搜索工具的提供商、协议和结果展示配置。"""
 
     enable: bool = False
     provider_id: str = ""
@@ -148,7 +193,12 @@ class WebSearchConfig:
 
 @dataclass(frozen=True)
 class MemoryRagConfig:
-    """记忆 RAG。"""
+    """长期记忆检索及自动写入/抽取策略。
+
+    ``recall_k`` 限制语义召回候选数，``max_return_results`` 限制工具返回上限；
+    自动记忆由关键词快速写入和按消息窗口调用模型抽取两条路径组成。抽取配置
+    分别控制模型、消息频率、最小间隔、历史窗口、置信度门槛及群/全局作用域。
+    """
 
     enable: bool = True
     embedding_provider_id: str = ""
@@ -166,7 +216,7 @@ class MemoryRagConfig:
 
 @dataclass(frozen=True)
 class RuntimeConfig:
-    """调用配置。"""
+    """运行时内存容量及外部模型调用超时配置。"""
 
     max_origins: int = 500
     image_caption_timeout: float = 45.0
@@ -175,11 +225,18 @@ class RuntimeConfig:
 
 @dataclass(frozen=True)
 class PluginConfig:
-    """插件完整配置。"""
+    """经过规范化的插件配置快照。
+
+    各字段对应一个不可变配置区块，避免业务逻辑直接操作原始 JSON 字典。
+    ``default_factory`` 为每个配置对象分别创建缺省子配置，避免实例之间共享状态。
+    ``history_enabled``、``react_enabled`` 等属性是底层开关组合出的便捷视图，
+    不会在解析过程中额外存储第二份可变状态。
+    """
 
     active_reply: ActiveReplyConfig = field(default_factory=ActiveReplyConfig)
     group_context: GroupContextConfig = field(default_factory=GroupContextConfig)
     group_reply: GroupReplyConfig = field(default_factory=GroupReplyConfig)
+    user_block: UserBlockConfig = field(default_factory=UserBlockConfig)
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     memory_rag: MemoryRagConfig = field(default_factory=MemoryRagConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
@@ -187,6 +244,8 @@ class PluginConfig:
     # ---- 派生属性 ------------------------------------------------------- #
     @property
     def history_enabled(self) -> bool:
+        """返回群聊历史记录与注入功能的总开关状态。"""
+        # 兼容调用方使用 history_enabled 命名访问上下文增强总开关。
         return self.group_context.enable
 
     @property
@@ -196,10 +255,14 @@ class PluginConfig:
 
     @property
     def smart_reply_enabled(self) -> bool:
+        """返回 React Pattern 与智能回复子开关同时开启的状态。"""
+        # React Pattern 是父级开关；子级智能回复开关不能单独越过它生效。
         return self.react_enabled and self.group_reply.smart_reply
 
     @property
     def role_display_enabled(self) -> bool:
+        """返回 React Pattern 与用户角色显示子开关同时开启的状态。"""
+        # 角色提示同样受 React Pattern 总开关约束。
         return self.react_enabled and self.group_reply.role_display
 
 
@@ -207,7 +270,19 @@ class PluginConfig:
 # 解析
 # --------------------------------------------------------------------------- #
 def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
-    """把原始配置 dict 解析为 PluginConfig（永不抛异常）。"""
+    """将 AstrBot 原始配置映射成完整、不可变且范围受限的配置快照。
+
+    每个区块先通过 ``_section`` 确认是字典，再使用对应的类型转换函数读取
+    字段；缺失或无法识别的值回退到插件默认值，超出合法范围的数值则被钳制。
+    枚举字段会映射到支持值，名单会拆分并去重。此函数不修改传入字典，
+    因而调用方可在每次配置更新后重新解析并安全地将结果交给业务代码。
+
+    Args:
+        raw: AstrBot 加载的插件配置；``None`` 或非字典区块按默认值处理。
+
+    Returns:
+        包含所有配置区块和派生开关的 ``PluginConfig`` 实例。
+    """
     raw = raw or {}
 
     ar_raw = _section(raw, "active_reply")
@@ -247,6 +322,23 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
         react_pattern=_to_bool(reply_raw.get("react_pattern"), False),
         role_display=_to_bool(reply_raw.get("role_display"), True),
         smart_reply=_to_bool(reply_raw.get("smart_reply"), True),
+    )
+    block_raw = _section(reply_raw, "user_block")
+    has_blacklist = "blacklist" in block_raw
+    block_ids = block_raw.get("blacklist")
+    if isinstance(block_ids, str):
+        block_ids = [part for part in block_ids.replace("\n", ",").split(",")]
+    if not isinstance(block_ids, (list, tuple)):
+        block_ids = []
+    blacklist = tuple(
+        str(item).strip()
+        for item in block_ids
+        if str(item).strip().isdigit() and len(str(item).strip()) <= 20
+    )
+    user_block = UserBlockConfig(
+        enable=_to_bool(block_raw.get("enable"), True),
+        blacklist=blacklist if has_blacklist else UserBlockConfig().blacklist,
+        block_hint=_to_bool(block_raw.get("block_hint"), False),
     )
 
     ws_raw = _section(raw, "web_search")
@@ -305,6 +397,7 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
         active_reply=active_reply,
         group_context=group_context,
         group_reply=group_reply,
+        user_block=user_block,
         web_search=web_search,
         memory_rag=memory_rag,
         runtime=runtime,
@@ -396,6 +489,13 @@ def deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any
 
 
 def get_by_path(data: dict[str, Any], path: str) -> Any:
+    """沿点分隔路径读取嵌套字典；路径不存在时返回 None。
+
+    Args:
+        data: 根配置字典。
+        path: 例如 ``active_reply.enable``。
+    """
+    # 按点分隔的路径读取嵌套配置；路径任一层不存在时返回 None。
     current: Any = data
     for key in path.split("."):
         if not isinstance(current, dict) or key not in current:
@@ -405,6 +505,8 @@ def get_by_path(data: dict[str, Any], path: str) -> Any:
 
 
 def set_by_path(data: dict[str, Any], path: str, value: Any) -> None:
+    """按点分隔路径创建中间字典并写入配置值。"""
+    # 按点分隔路径逐层创建字典节点，再写入字段值。
     keys = path.split(".")
     current = data
     for key in keys[:-1]:
@@ -437,6 +539,8 @@ def coerce_group_value(spec: GroupFieldSpec, value: Any) -> Any:
 
 
 def _field_default(spec: GroupFieldSpec) -> Any:
+    """根据群级字段定义返回该项的插件默认值。"""
+    # 群级覆盖表单使用独立默认值，避免依赖未加载的全局配置实例。
     defaults: dict[str, Any] = {
         "active_reply.enable": False,
         "active_reply.mode": "probability",
