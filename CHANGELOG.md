@@ -1,5 +1,12 @@
 # 更新日志
 
+## v1.0.4_F1（2026-10-31）
+
+修复：
+
+- `/replytest` token 用量显示为 0：`@` / 唤醒回复此前走了流式路径，现在统一强制非流式，token 才能被统计
+- 新增 `raw_completion.usage` 回退解析，兼容 OpenAI / DeepSeek / Anthropic / Gemini 的用量字段（`prompt_tokens_details.cached_tokens`、`prompt_cache_hit_tokens`、`cache_read_input_tokens` 等）
+
 ## v1.0.4（2026-10-31）
 
 元数据：声明支持平台 OneBot（`aiocqhttp`），市场分类「工具、AI 增强」。

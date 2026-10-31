@@ -104,6 +104,16 @@ class RuntimeState:
         bucket["output"] += int(getattr(usage, "output", 0) or 0)
         bucket["calls"] += 1
 
+    def add_usage_totals(
+        self, origin: str, cached: int, other: int, output: int
+    ) -> None:
+        """按已归一的三个数值累加 token 用量。"""
+        bucket = self.turn_usage[origin]
+        bucket["input_cached"] += max(int(cached or 0), 0)
+        bucket["input_other"] += max(int(other or 0), 0)
+        bucket["output"] += max(int(output or 0), 0)
+        bucket["calls"] += 1
+
     def log_line(self, origin: str, line: str) -> None:
         """将非空执行日志追加到指定来源的当前轮次。"""
         # 忽略空日志，防止调试报告出现无意义的空条目。
