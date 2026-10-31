@@ -19,13 +19,11 @@ import asyncio
 import base64
 import datetime
 import json
-import logging
 import mimetypes
 import random
 import re
 import time
 import uuid
-from collections import deque
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -80,7 +78,6 @@ from .tags import (
 PLUGIN_NAME = "astrbot_plugin_active_reply"
 PLUGIN_VERSION = "1.0.3"
 BLOCK_HINT_TEXT = "你已被屏蔽，暂时无法与机器人互动。原因：{reason}（{remaining}）"
-REPORT_LOG_MAX = 30
 MAX_MENTIONS_PER_MESSAGE = 3
 MSG_ID_PATTERN = re.compile(r"#msg([^:]+):")
 IMAGE_MARKER_PATTERN = re.compile(r"\[Image(?:: [^\]]*)?\]")
@@ -219,8 +216,6 @@ class ActiveReplyPlugin(star.Star):
             self.block_store.sync_from_config(self._global_cfg().user_block.blacklist)
         except Exception as exc:
             logger.warning(f"[ActiveReply] 同步用户屏蔽配置失败: {exc}")
-        self._log_buffer: deque[str] = deque(maxlen=400)
-        self._install_log_handler()
         self.page_api = PageApi(self)
         self._register_web_apis()
 
@@ -262,63 +257,6 @@ class ActiveReplyPlugin(star.Star):
             return str(event.get_group_id() or "").strip()
         except Exception:
             return ""
-
-    # ------------------------------------------------------------------ #
-    # 日志缓冲（调试报告用）
-    # ------------------------------------------------------------------ #
-    def _install_log_handler(self) -> None:
-        """把最近的 AstrBot 日志收进环形缓冲，供 /replytest 报告展示。"""
-        buffer = self._log_buffer
-
-        class _BufferHandler(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:  # noqa: D102
-                try:
-                    text = record.getMessage()
-                except Exception:
-                    return
-                stamp = time.strftime("%H:%M:%S", time.localtime(record.created))
-                buffer.append(
-                    (float(record.created), f"[{stamp}] [{record.name}] {text}")
-                )
-
-        try:
-            handler = _BufferHandler(level=logging.INFO)
-            logging.getLogger().addHandler(handler)
-            self._log_handler = handler
-        except Exception as exc:  # 日志缓冲失败不影响插件运行
-            logger.debug(f"[ActiveReply] 挂载日志缓冲失败: {exc}")
-
-        # AstrBot 的日志走 loguru（logging -> loguru 拦截），root handler 收不到，
-        # 这里额外挂一个 loguru sink，保证调试报告能拿到真实运行日志。
-        self._loguru_sink_id = None
-        try:
-            from loguru import logger as loguru_logger
-
-            def _sink(message) -> None:  # noqa: ANN001 - loguru 传入 Message 对象
-                record = message.record
-                name = str(record["name"] or "")
-                if name.startswith(("aiohttp", "urllib3", "httpx", "charset_normalizer")):
-                    return
-                stamp = record["time"].strftime("%H:%M:%S")
-                buffer.append(
-                    (
-                        float(record["time"].timestamp()),
-                        f"[{stamp}] [{name}] {str(record['message'])[:300]}",
-                    )
-                )
-
-            self._loguru_sink_id = loguru_logger.add(
-                _sink, level="INFO", format="{message}"
-            )
-        except Exception as exc:
-            logger.debug(f"[ActiveReply] 挂载 loguru 日志捕获失败: {exc}")
-
-    def _recent_logs(self, origin: str, limit: int = REPORT_LOG_MAX) -> list[str]:
-        start = float(self.state.turn_started_at.get(origin, 0.0))
-        if start <= 0:
-            return []
-        items = [text for stamp, text in list(self._log_buffer) if stamp >= start]
-        return items[-limit:]
 
     # ------------------------------------------------------------------ #
     # 用户屏蔽
@@ -463,15 +401,6 @@ class ActiveReplyPlugin(star.Star):
 
     async def terminate(self) -> None:
         """插件卸载时移除日志捕获。"""
-        try:
-            sink_id = getattr(self, "_loguru_sink_id", None)
-            if sink_id is not None:
-                from loguru import logger as loguru_logger
-
-                loguru_logger.remove(sink_id)
-                self._loguru_sink_id = None
-        except Exception:
-            pass
         logger.info("[ActiveReply] 插件已卸载")
 
     # ------------------------------------------------------------------ #
@@ -1144,27 +1073,37 @@ class ActiveReplyPlugin(star.Star):
             )
             return
 
+        # 按官方建议：不去改写 req.prompt、也不清空 req.contexts，
+        # 而是把群聊历史与参与提示作为「临时用户内容块」追加到本轮请求。
+        # 临时块带 _no_save 标记，不会写进会话历史，因此既不影响后续轮次，
+        # 也保留了已有上下文的缓存前缀。
         if active_triggered:
-            prompt = (
-                "你正在一个群聊中。以下是最近的聊天记录：\n"
-                f"{history_text}\n\n"
-                "你刚决定主动参与这段对话。请自然地接一句话："
+            guidance = (
+                "\n\n### 参与提示\n"
+                "你刚决定主动参与上面的群聊。请自然地接一句话："
                 "想回应某条具体消息时用引用，想点名某人时用 @，不需要就都不用。"
                 "只输出你的回复内容，不要输出任何解释。"
-                f"{instructions}"
             )
         else:
-            incoming = str(req.prompt or "")
-            prompt = (
-                "你正在一个群聊中。以下是最近的聊天记录：\n"
-                f"{history_text}\n\n"
-                f"现在有一条新消息：`{incoming}`\n"
-                "请针对这条消息作出反应，你的全部输出就是发出去的回复。"
+            guidance = (
+                "\n\n### 参与提示\n"
+                "请针对用户当前这条消息作出反应，上面的群聊记录用于理解上下文与语气。"
                 "需要时再引用或 @，不必强求。只输出你的回复内容，不要输出任何解释。"
-                f"{instructions}"
             )
-        req.prompt = prompt
-        req.contexts = []
+        block = (
+            "\n\n### 群聊历史（按时间顺序，仅供理解上下文）\n"
+            f"{history_text}{guidance}{instructions}"
+        )
+        parts = getattr(req, "extra_user_content_parts", None)
+        if parts is None:
+            # 旧版 AstrBot 没有临时内容块：只追加到提示词尾部，仍不清空上下文
+            req.prompt = f"{req.prompt or ''}{block}"
+            return
+        part = TextPart(text=block.strip())
+        marker = getattr(part, "mark_as_temp", None)
+        if callable(marker):
+            marker()
+        parts.append(part)
 
     # ------------------------------------------------------------------ #
     # 结果处理
@@ -1401,20 +1340,6 @@ class ActiveReplyPlugin(star.Star):
             ),
             Node(content=[Plain("\n".join(lines))], name="ActiveReply", uin="0"),
         ]
-        logs = self._recent_logs(origin)
-        if logs:
-            nodes.append(
-                Node(
-                    content=[
-                        Plain(
-                            "AstrBot 日志（本轮）\n"
-                            + "\n".join(line[:200] for line in logs)
-                        )
-                    ],
-                    name="ActiveReply",
-                    uin="0",
-                )
-            )
         await event.send(MessageChain([Nodes(nodes=nodes)]))
 
     @filter.on_llm_response()
