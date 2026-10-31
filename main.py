@@ -589,10 +589,13 @@ class ActiveReplyPlugin(star.Star):
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return
 
+        # 流式输出会绕过 on_decorating_result，标签会被原样发出；模型还可能从
+        # 历史里模仿出 <quote/> 写法。凡是本插件看得到的群消息都关掉流式，
+        # 这样 @ / 唤醒回复也会走非流式路径（token 用量才完整）。
+        event.set_extra("enable_streaming", False)
+
         # 屏蔽优先于一切处理：被屏蔽用户的消息（含指令）都不进入插件逻辑
         if await self._enforce_user_block(event):
-            return
-        if self._is_wake_command(event):
             return
 
         if str(event.get_sender_id() or "") == str(event.get_self_id() or ""):
@@ -603,14 +606,14 @@ class ActiveReplyPlugin(star.Star):
             return
 
         cfg = self.cfg_for_event(event)
-        # 新的一轮消息：重置 token 用量与执行日志
+        # 新的一轮消息：重置 token 用量与执行日志（@ 唤醒的回复也要单独计一轮）
         self.state.reset_turn(event.unified_msg_origin)
         # 只要收到过群消息就标记该群活跃（即使历史增强关闭，状态页也能看到）
         self._touch(event.unified_msg_origin, cfg)
-        # 流式输出会绕过 on_decorating_result，标签会被原样发出；模型还可能从
-        # 历史里模仿出 <quote/> 写法（即使没开智能回复）。所以凡是本插件看得到的
-        # 群消息，一律让本轮回复走非流式路径。
-        event.set_extra("enable_streaming", False)
+
+        if self._is_wake_command(event):
+            return
+
         if not cfg.group_context.enable and not cfg.active_reply.enable:
             return
 
@@ -857,8 +860,9 @@ class ActiveReplyPlugin(star.Star):
             return False, "ERROR"
 
         try:
-            if getattr(response, "usage", None) is not None:
-                self.state.add_usage(origin, response.usage)
+            totals = self._usage_totals(response)
+            if totals is not None:
+                self.state.add_usage_totals(origin, *totals)
         except Exception:
             pass
 
@@ -1303,6 +1307,84 @@ class ActiveReplyPlugin(star.Star):
         except Exception as exc:
             logger.debug(f"[ActiveReply] 发送调试报告失败: {exc}")
 
+    @staticmethod
+    def _pick_int(obj: Any, *names: str) -> int:
+        """从 dict 或对象里取第一个可用的整数字段。"""
+        if obj is None:
+            return 0
+        if isinstance(obj, dict):
+            for name in names:
+                value = obj.get(name)
+                if value is not None:
+                    try:
+                        return int(value)
+                    except (TypeError, ValueError):
+                        return 0
+            return 0
+        for name in names:
+            value = getattr(obj, name, None)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+
+    @classmethod
+    def _usage_totals(cls, resp: Any) -> tuple[int, int, int] | None:
+        """归一化 token 用量：优先 LLMResponse.usage，回退 raw_completion.usage。
+
+        不同提供商/版本的字段名不同（OpenAI 的 prompt_tokens_details、
+        DeepSeek 的 prompt_cache_hit_tokens、Anthropic 的 cache_read_input_tokens
+        等），这里统一换算成（命中缓存、未命中缓存、输出）。
+        """
+        usage = getattr(resp, "usage", None)
+        cached = cls._pick_int(usage, "input_cached")
+        other = cls._pick_int(usage, "input_other")
+        output = cls._pick_int(usage, "output")
+        if cached or other or output:
+            return cached, other, output
+
+        raw = getattr(resp, "raw_completion", None)
+        raw_usage = (
+            raw.get("usage") if isinstance(raw, dict) else getattr(raw, "usage", None)
+        )
+        if raw_usage is None:
+            if usage is not None:
+                return 0, 0, 0
+            return None
+
+        cached = cls._pick_int(
+            raw_usage,
+            "input_cached",
+            "prompt_cache_hit_tokens",
+            "cache_read_input_tokens",
+            "cached_content_token_count",
+        )
+        output = cls._pick_int(
+            raw_usage,
+            "output",
+            "completion_tokens",
+            "output_tokens",
+            "candidates_token_count",
+        )
+        input_total = cls._pick_int(
+            raw_usage, "prompt_tokens", "input_tokens", "prompt_token_count"
+        )
+        details = (
+            raw_usage.get("prompt_tokens_details")
+            if isinstance(raw_usage, dict)
+            else getattr(raw_usage, "prompt_tokens_details", None)
+        )
+        if not cached:
+            cached = cls._pick_int(details, "cached_tokens", "cache_read")
+        other = cls._pick_int(raw_usage, "input_other", "prompt_cache_miss_tokens")
+        if not other and input_total:
+            other = max(input_total - cached, 0)
+        if not (cached or other or output):
+            return 0, 0, 0
+        return cached, other, output
+
     def _usage_lines(self, origin: str) -> list[str]:
         """把本轮 token 用量转换为适合调试报告展示的文本行。"""
         # 将本轮 token 分类用量汇总为调试转发中可读的文本行。
@@ -1347,9 +1429,11 @@ class ActiveReplyPlugin(star.Star):
         """记录 token 用量，并把 Bot 自己的回复写回群聊历史。"""
         origin = event.unified_msg_origin
         try:
-            usage = getattr(resp, "usage", None)
-            if usage is not None:
-                self.state.add_usage(origin, usage)
+            totals = self._usage_totals(resp)
+            if totals is not None:
+                self.state.add_usage_totals(origin, *totals)
+            else:
+                logger.debug("[ActiveReply] 模型未返回 token 用量 | origin=%s", origin)
         except Exception as exc:
             logger.debug(f"[ActiveReply] 记录 token 用量失败: {exc}")
 
