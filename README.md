@@ -8,7 +8,7 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.0.0-4b8bf5)](https://docs.astrbot.app/dev/star/plugin-new.html)
 [![Python](https://img.shields.io/badge/Python-%3E%3D3.10-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v1.0.3-12a37a)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.0.4-12a37a)](./CHANGELOG.md)
 
 **支持平台：OneBot（aiocqhttp）** · **插件市场分类：工具、AI 增强**
 
@@ -45,7 +45,7 @@
 | 用户屏蔽 | 全局黑名单 + 群级屏蔽，支持原因、时长与屏蔽提示；ID 支持字母数字；被屏蔽用户的消息不进入插件 |
 | 联网搜索 | `grok_web_search` 工具，按需检索实时信息 |
 | 图片理解 | `enhance_use_image` 按需查看历史图片并回填描述 |
-| 回复调试 | `/replytest` 开启后，每次回复附带 token 用量、缓存命中率与本轮 AstrBot 日志 |
+| 回复调试 | `/replytest` 开启后，每次回复附带 token 用量与缓存命中率 |
 | 插件页面 | 状态、群配置、记忆 RAG、屏蔽设置、全局设置；深浅色自动跟随 |
 
 ## 指令
@@ -53,7 +53,7 @@
 | 指令 | 权限 | 说明 |
 |---|---|---|
 | `/执行回复` | 管理员 | 立即执行一次主动回复或模型判定；结束后发送执行日志（合并转发，含 token 用量） |
-| `/replytest true\|false` | 管理员 | 开启/关闭本群回复调试；别名 `/回复调试 开\|关`。开启后每次回复附带 token 用量与 AstrBot 日志 |
+| `/replytest true\|false` | 管理员 | 开启/关闭本群回复调试；别名 `/回复调试 开\|关`。开启后每次回复附带 token 用量与缓存命中率 |
 | `/ban <时间> <用户ID> <原因>` | 管理员 | 在本群屏蔽用户 |
 | `/ban-all <时间> <用户ID> <原因>` | 管理员 | 全局屏蔽用户（含私聊） |
 | `/remove <用户ID>`、`/pass <用户ID>` | 管理员 | 解除本群屏蔽 |

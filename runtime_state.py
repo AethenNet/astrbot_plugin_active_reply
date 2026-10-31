@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import time
 from collections import OrderedDict, defaultdict
 
 
@@ -47,8 +46,6 @@ class RuntimeState:
         # 自动记忆：抽取计数与上次抽取时间
         self.extract_counters: dict[str, int] = defaultdict(int)
         self.last_extract_at: dict[str, float] = {}
-        # 本轮开始时间（调试报告用来截取日志）
-        self.turn_started_at: dict[str, float] = {}
         # LRU：最左侧最久未使用
         self.origin_lru: OrderedDict[str, None] = OrderedDict()
 
@@ -68,7 +65,6 @@ class RuntimeState:
         self.pending_report.pop(origin, None)
         self.extract_counters.pop(origin, None)
         self.last_extract_at.pop(origin, None)
-        self.turn_started_at.pop(origin, None)
 
     def touch_origin(self, origin: str, max_origins: int) -> None:
         """刷新来源的最近使用顺序，并按来源总数上限执行 LRU 淘汰。
@@ -92,7 +88,6 @@ class RuntimeState:
     # ------------------------------------------------------------------ #
     def reset_turn(self, origin: str) -> None:
         """新的一轮开始：清空用量与执行日志。"""
-        self.turn_started_at[origin] = time.time()
         self.turn_usage[origin] = {
             "input_cached": 0,
             "input_other": 0,
